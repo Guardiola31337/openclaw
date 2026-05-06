@@ -783,6 +783,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         pluginId: record.id,
         path: normalizedPath,
         handler: params.handler,
+        ...(params.handleUpgrade ? { handleUpgrade: params.handleUpgrade } : {}),
         auth: params.auth,
         match,
         ...(params.gatewayRuntimeScopeSurface
@@ -797,6 +798,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       pluginId: record.id,
       path: normalizedPath,
       handler: params.handler,
+      ...(params.handleUpgrade ? { handleUpgrade: params.handleUpgrade } : {}),
       auth: params.auth,
       match,
       ...(params.gatewayRuntimeScopeSurface

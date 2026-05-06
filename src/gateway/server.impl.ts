@@ -1,5 +1,4 @@
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
-import { CANVAS_HOST_PATH, type CanvasHostServer } from "../../extensions/canvas/runtime-api.js";
 import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/run-state.js";
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
 import type { ChannelRuntimeSurface } from "../channels/plugins/channel-runtime-surface.types.js";
@@ -142,7 +141,6 @@ function resolveMediaCleanupTtlMs(ttlHoursRaw: number): number {
 }
 
 const log = createSubsystemLogger("gateway");
-const logCanvas = log.child("canvas");
 const logDiscovery = log.child("discovery");
 const logTailscale = log.child("tailscale");
 const logChannels = log.child("channels");
@@ -198,7 +196,6 @@ const logPlugins = log.child("plugins");
 const logWsControl = log.child("ws");
 const logSecrets = log.child("secrets");
 const gatewayRuntime = runtimeForLogger(log);
-const canvasRuntime = runtimeForLogger(logCanvas);
 
 function createGatewayStartupTrace() {
   const logEnabled = isTruthyEnvValue(process.env.OPENCLAW_GATEWAY_STARTUP_TRACE);
@@ -482,10 +479,6 @@ export type GatewayServerOptions = {
    * Override gateway Tailscale exposure configuration (merges with config).
    */
   tailscale?: import("../config/config.js").GatewayTailscaleConfig;
-  /**
-   * Test-only: allow canvas host startup even when NODE_ENV/VITEST would disable it.
-   */
-  allowCanvasHostInTests?: boolean;
   /**
    * Test-only: override the setup wizard runner.
    */
@@ -779,7 +772,6 @@ export async function startGatewayServer(
   const deps = createDefaultDeps();
   let runtimeState: GatewayServerLiveState | null = null;
   let gatewayCronStartHandled = false;
-  let canvasHostServer: CanvasHostServer | null = null;
   const gatewayTls = await startupTrace.measure("tls.runtime", () =>
     loadGatewayTlsRuntime(cfgAtStart.gateway?.tls, log.child("tls")),
   );
@@ -815,7 +807,6 @@ export async function startGatewayServer(
   });
   log.info("starting HTTP server...");
   const {
-    canvasHost,
     releasePluginRouteRegistry,
     httpServer,
     httpServers,
@@ -858,10 +849,6 @@ export async function startGatewayServer(
       pluginRegistry,
       pinChannelRegistry: !minimalTestGateway,
       deps,
-      canvasRuntime,
-      canvasHostEnabled,
-      allowCanvasHostInTests: opts.allowCanvasHostInTests,
-      logCanvas,
       log,
       logHooks,
       logPlugins,
@@ -947,8 +934,6 @@ export async function startGatewayServer(
       await createGatewayCloseHandler({
         bonjourStop: runtimeState.bonjourStop,
         tailscaleCleanup: runtimeState.tailscaleCleanup,
-        canvasHost,
-        canvasHostServer,
         releasePluginRouteRegistry,
         channelIds,
         stopChannel,
@@ -1235,8 +1220,6 @@ export async function startGatewayServer(
       };
     };
 
-    const canvasHostServerPort = (canvasHostServer as CanvasHostServer | null)?.port;
-
     const unavailableGatewayMethods = new Set<string>(
       minimalTestGateway ? [] : STARTUP_UNAVAILABLE_GATEWAY_METHODS,
     );
@@ -1342,9 +1325,8 @@ export async function startGatewayServer(
       preauthConnectionBudget,
       port,
       gatewayHost: bindHost ?? undefined,
-      canvasHostEnabled: Boolean(canvasHost),
+      canvasHostEnabled,
       canvasHostScheme,
-      canvasHostServerPort,
       resolvedAuth,
       getResolvedAuth,
       getRequiredSharedGatewaySessionGeneration: () =>
@@ -1363,11 +1345,6 @@ export async function startGatewayServer(
       context: gatewayRequestContext,
     });
     await startListening();
-    if (canvasHost?.rootDir) {
-      logCanvas.info(
-        `canvas host mounted at ${canvasHostScheme}://${bindHost}:${port}${CANVAS_HOST_PATH}/ (root ${canvasHost.rootDir})`,
-      );
-    }
     startupTrace.mark("http.bound");
     const sessionDeliveryRecoveryMaxEnqueuedAt = Date.now();
     let postAttachRuntimeReturned = false;

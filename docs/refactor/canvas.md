@@ -43,14 +43,18 @@ Done:
 - Moved Canvas host URL and scoped capability helpers into `extensions/canvas/src`.
 - Moved Canvas node command defaults out of hardcoded core lists and into plugin `nodeInvokePolicies`.
 - Added plugin-owned Canvas host config at `plugins.entries.canvas.config.host`.
-- Kept top-level `canvasHost` as a legacy compatibility alias while new config moves to the Canvas plugin entry.
+- Added a Canvas plugin setup migration so `openclaw doctor --fix` rewrites legacy top-level `canvasHost` config into `plugins.entries.canvas.config.host`.
+- Moved Canvas and A2UI HTTP serving behind Canvas plugin HTTP route registration.
+- Added generic plugin WebSocket upgrade dispatch for plugin-owned HTTP routes.
+- Kept top-level `canvasHost` as a legacy read compatibility alias while doctor repairs old configs.
 - Updated generated plugin inventory to include Canvas.
 - Added plugin reference docs at `docs/plugins/reference/canvas.md`.
 
 Known remaining core-owned Canvas surfaces:
 
 - `src/cli/nodes-cli/register.canvas.ts` remains as a compatibility shim because the current plugin CLI registry owns top-level commands, while Canvas is nested under `nodes canvas`
-- `src/config/types.gateway.ts` and related schema labels/help retain legacy `canvasHost` compatibility
+- `src/config/types.gateway.ts` and related schema labels/help retain legacy `canvasHost` read/repair compatibility
+- Gateway node hello and `nodes.canvasCapability.refresh` still carry `canvasHostUrl`/capability fields because native clients already speak that protocol shape
 - native app Canvas protocol/client handlers under `apps/`
 
 ## Target shape
@@ -70,8 +74,8 @@ Core should own only generic seams:
 - plugin discovery and registration
 - generic agent tool registry
 - generic node invoke policy registry
-- generic gateway HTTP/auth dispatch
-- generic node capability transport
+- generic gateway HTTP/auth and WebSocket upgrade dispatch
+- generic node capability transport plus the existing Canvas protocol fields until native clients have a plugin-generic replacement
 - generic config plumbing plus the legacy `canvasHost` alias for existing Canvas config
 
 Native apps may keep Canvas command handlers as clients of the protocol. They are not the plugin runtime owner.
@@ -79,7 +83,7 @@ Native apps may keep Canvas command handlers as clients of the protocol. They ar
 ## Migration steps
 
 1. Treat `plugins.entries.canvas.config.host` as the plugin-owned config surface.
-2. Keep `canvasHost` as a read-only compatibility alias until a later migration/doctor pass can rewrite existing configs.
+2. Let `openclaw doctor --fix` migrate legacy `canvasHost` into `plugins.entries.canvas.config.host`.
 3. Update docs so Canvas is described as an experimental bundled plugin.
 4. Run focused Canvas tests, plugin inventory checks, plugin SDK API checks, and build/type gates affected by runtime boundaries.
 
@@ -92,6 +96,7 @@ Before calling the refactor complete:
 - `rg "canvas.present|canvas.snapshot|canvas.a2ui" src/gateway` finds no hardcoded allowlist defaults outside generic plugin policy tests.
 - `rg "canvas-documents" src` is either empty or only imports the Canvas plugin runtime barrel.
 - `rg "registerNodesCanvasCommands|nodes-canvas" src` is either empty or only a compatibility shim that delegates to the Canvas plugin.
+- `rg "createCanvasHostHandler|handleA2uiHttpRequest" src/gateway` returns no gateway runtime ownership.
 - `pnpm plugins:inventory:check` passes.
 - `pnpm plugin-sdk:api:check` passes, or generated API baselines are intentionally updated and reviewed.
 - Targeted Canvas tests pass.
@@ -105,6 +110,7 @@ Use targeted local checks while iterating:
 ```sh
 pnpm test extensions/canvas/src/host/server.test.ts extensions/canvas/src/host/server.state-dir.test.ts extensions/canvas/src/host/file-resolver.test.ts
 pnpm test src/gateway/server.canvas-auth.test.ts src/gateway/server-import-boundary.test.ts
+pnpm test extensions/canvas/src/config-migration.test.ts src/commands/doctor-legacy-config.migrations.test.ts
 pnpm test test/scripts/changed-lanes.test.ts test/scripts/bundle-a2ui.test.ts
 pnpm tsgo:extensions
 pnpm plugins:inventory:check

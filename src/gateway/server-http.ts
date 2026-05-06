@@ -11,9 +11,7 @@ import {
   A2UI_PATH,
   CANVAS_HOST_PATH,
   CANVAS_WS_PATH,
-  handleA2uiHttpRequest,
   normalizeCanvasScopedUrl,
-  type CanvasHostHandler,
 } from "../../extensions/canvas/runtime-api.js";
 import { resolveBundledChannelGatewayAuthBypassPaths } from "../channels/plugins/gateway-auth-bypass.js";
 import { getRuntimeConfig } from "../config/io.js";
@@ -47,6 +45,18 @@ import type { GatewayWsClient } from "./server/ws-types.js";
 type PluginHttpRequestHandler = (
   req: IncomingMessage,
   res: ServerResponse,
+  pathContext?: PluginRoutePathContext,
+  dispatchContext?: {
+    gatewayAuthSatisfied?: boolean;
+    gatewayRequestAuth?: AuthorizedGatewayHttpRequest;
+    gatewayRequestOperatorScopes?: readonly string[];
+  },
+) => Promise<boolean>;
+
+type PluginHttpUpgradeHandler = (
+  req: IncomingMessage,
+  socket: import("node:stream").Duplex,
+  head: Buffer,
   pathContext?: PluginRoutePathContext,
   dispatchContext?: {
     gatewayAuthSatisfied?: boolean;
@@ -215,10 +225,6 @@ function isSessionKillPath(pathname: string): boolean {
 
 function isSessionHistoryPath(pathname: string): boolean {
   return /^\/sessions\/[^/]+\/history$/.test(pathname);
-}
-
-function isA2uiPath(pathname: string): boolean {
-  return pathname === A2UI_PATH || pathname.startsWith(`${A2UI_PATH}/`);
 }
 
 function isCanvasPath(pathname: string): boolean {
@@ -463,7 +469,6 @@ function buildPluginRequestStages(params: {
 }
 
 export function createGatewayHttpServer(opts: {
-  canvasHost: CanvasHostHandler | null;
   clients: Set<GatewayWsClient>;
   controlUiEnabled: boolean;
   controlUiBasePath: string;
@@ -475,7 +480,9 @@ export function createGatewayHttpServer(opts: {
   strictTransportSecurityHeader?: string;
   handleHooksRequest: HooksRequestHandler;
   handlePluginRequest?: PluginHttpRequestHandler;
+  handlePluginUpgrade?: PluginHttpUpgradeHandler;
   shouldEnforcePluginGatewayAuth?: (pathContext: PluginRoutePathContext) => boolean;
+  shouldAuthorizeCanvasRequest?: (pathContext: PluginRoutePathContext) => boolean;
   resolvedAuth: ResolvedGatewayAuth;
   getResolvedAuth?: () => ResolvedGatewayAuth;
   /** Optional rate limiter for auth brute-force protection. */
@@ -485,7 +492,6 @@ export function createGatewayHttpServer(opts: {
   tlsOptions?: TlsOptions;
 }): HttpServer {
   const {
-    canvasHost,
     clients,
     controlUiEnabled,
     controlUiBasePath,
@@ -497,7 +503,9 @@ export function createGatewayHttpServer(opts: {
     strictTransportSecurityHeader,
     handleHooksRequest,
     handlePluginRequest,
+    handlePluginUpgrade,
     shouldEnforcePluginGatewayAuth,
+    shouldAuthorizeCanvasRequest,
     resolvedAuth,
     rateLimiter,
     getReadiness,
@@ -666,7 +674,11 @@ export function createGatewayHttpServer(opts: {
             }),
         });
       }
-      if (canvasHost) {
+      if (
+        handlePluginRequest &&
+        pluginPathContext &&
+        shouldAuthorizeCanvasRequest?.(pluginPathContext)
+      ) {
         requestStages.push({
           name: "canvas-auth",
           run: async () => {
@@ -690,14 +702,6 @@ export function createGatewayHttpServer(opts: {
             }
             return false;
           },
-        });
-        requestStages.push({
-          name: "a2ui",
-          run: () => (isA2uiPath(scopedRequestPath) ? handleA2uiHttpRequest(req, res) : false),
-        });
-        requestStages.push({
-          name: "canvas-http",
-          run: () => canvasHost.handleHttpRequest(req, res),
         });
       }
       // Plugin routes run before the Control UI SPA catch-all so explicitly
@@ -803,7 +807,8 @@ export function createGatewayHttpServer(opts: {
 export function attachGatewayUpgradeHandler(opts: {
   httpServer: HttpServer;
   wss: WebSocketServer;
-  canvasHost: CanvasHostHandler | null;
+  handlePluginUpgrade?: PluginHttpUpgradeHandler;
+  shouldAuthorizeCanvasRequest?: (pathContext: PluginRoutePathContext) => boolean;
   clients: Set<GatewayWsClient>;
   preauthConnectionBudget: PreauthConnectionBudget;
   resolvedAuth: ResolvedGatewayAuth;
@@ -816,7 +821,8 @@ export function attachGatewayUpgradeHandler(opts: {
   const {
     httpServer,
     wss,
-    canvasHost,
+    handlePluginUpgrade,
+    shouldAuthorizeCanvasRequest,
     clients,
     preauthConnectionBudget,
     resolvedAuth,
@@ -840,26 +846,31 @@ export function attachGatewayUpgradeHandler(opts: {
       }
       const resolvedAuth = getResolvedAuth();
       const url = new URL(req.url ?? "/", "http://localhost");
-      if (canvasHost) {
-        if (url.pathname === CANVAS_WS_PATH) {
-          const { authorizeCanvasRequest } = await getCanvasAuthModule();
-          const ok = await authorizeCanvasRequest({
-            req,
-            auth: resolvedAuth,
-            trustedProxies,
-            allowRealIpFallback,
-            clients,
-            canvasCapability: scopedCanvas.capability,
-            malformedScopedPath: scopedCanvas.malformedScopedPath,
-            rateLimiter,
-          });
-          if (!ok.ok) {
-            writeUpgradeAuthFailure(socket, ok);
-            socket.destroy();
-            return;
-          }
+      const pathContext = resolvePluginRoutePathContext(url.pathname);
+      if (isCanvasPath(url.pathname) && shouldAuthorizeCanvasRequest?.(pathContext)) {
+        const { authorizeCanvasRequest } = await getCanvasAuthModule();
+        const ok = await authorizeCanvasRequest({
+          req,
+          auth: resolvedAuth,
+          trustedProxies,
+          allowRealIpFallback,
+          clients,
+          canvasCapability: scopedCanvas.capability,
+          malformedScopedPath: scopedCanvas.malformedScopedPath,
+          rateLimiter,
+        });
+        if (!ok.ok) {
+          writeUpgradeAuthFailure(socket, ok);
+          socket.destroy();
+          return;
         }
-        if (canvasHost.handleUpgrade(req, socket, head)) {
+      }
+      if (handlePluginUpgrade) {
+        if (
+          await handlePluginUpgrade(req, socket, head, pathContext, {
+            gatewayAuthSatisfied: false,
+          })
+        ) {
           return;
         }
       }

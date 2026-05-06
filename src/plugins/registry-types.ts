@@ -44,6 +44,7 @@ import type {
   OpenClawGatewayDiscoveryService,
   OpenClawPluginHttpRouteAuth,
   OpenClawPluginHttpRouteHandler,
+  OpenClawPluginHttpRouteUpgradeHandler,
   OpenClawPluginHttpRouteMatch,
   OpenClawPluginReloadRegistration,
   OpenClawPluginSecurityAuditCollector,
@@ -89,6 +90,7 @@ export type PluginHttpRouteRegistration = {
   pluginId?: string;
   path: string;
   handler: OpenClawPluginHttpRouteHandler;
+  handleUpgrade?: OpenClawPluginHttpRouteUpgradeHandler;
   auth: OpenClawPluginHttpRouteAuth;
   match: OpenClawPluginHttpRouteMatch;
   gatewayRuntimeScopeSurface?: OpenClawPluginGatewayRuntimeScopeSurface;

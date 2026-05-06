@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
@@ -2024,9 +2025,16 @@ export type OpenClawPluginHttpRouteHandler = (
   res: ServerResponse,
 ) => Promise<boolean | void> | boolean | void;
 
+export type OpenClawPluginHttpRouteUpgradeHandler = (
+  req: IncomingMessage,
+  socket: Duplex,
+  head: Buffer,
+) => Promise<boolean | void> | boolean | void;
+
 export type OpenClawPluginHttpRouteParams = {
   path: string;
   handler: OpenClawPluginHttpRouteHandler;
+  handleUpgrade?: OpenClawPluginHttpRouteUpgradeHandler;
   auth: OpenClawPluginHttpRouteAuth;
   match?: OpenClawPluginHttpRouteMatch;
   gatewayRuntimeScopeSurface?: OpenClawPluginGatewayRuntimeScopeSurface;

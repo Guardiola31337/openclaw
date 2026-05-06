@@ -234,13 +234,23 @@ async function withCanvasGatewayHarness(params: {
   };
 
   const httpServer = createGatewayHttpServer({
-    canvasHost,
     clients,
     controlUiEnabled: false,
     controlUiBasePath: "/__control__",
     openAiChatCompletionsEnabled: false,
     openResponsesEnabled: false,
     handleHooksRequest: async () => false,
+    handlePluginRequest: async (req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === A2UI_PATH || url.pathname.startsWith(`${A2UI_PATH}/`)) {
+        res.statusCode = 503;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("A2UI assets not found");
+        return true;
+      }
+      return canvasHost.handleHttpRequest(req, res);
+    },
+    shouldAuthorizeCanvasRequest: () => true,
     resolvedAuth: params.resolvedAuth,
     getResolvedAuth: params.getResolvedAuth,
     rateLimiter: params.rateLimiter,
@@ -250,7 +260,8 @@ async function withCanvasGatewayHarness(params: {
   attachGatewayUpgradeHandler({
     httpServer,
     wss,
-    canvasHost,
+    handlePluginUpgrade: async (req, socket, head) => canvasHost.handleUpgrade(req, socket, head),
+    shouldAuthorizeCanvasRequest: () => true,
     clients,
     preauthConnectionBudget: createPreauthConnectionBudget(8),
     resolvedAuth: params.resolvedAuth,
