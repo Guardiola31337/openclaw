@@ -1,7 +1,10 @@
 import type { IncomingMessage, Server as HttpServer, ServerResponse } from "node:http";
 import { WebSocketServer } from "ws";
-import { CANVAS_HOST_PATH } from "../canvas-host/a2ui.js";
-import type { CanvasHostHandler } from "../canvas-host/server.js";
+import {
+  CANVAS_HOST_PATH,
+  resolveCanvasHostConfig,
+  type CanvasHostHandler,
+} from "../../extensions/canvas/runtime-api.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
 import type { PluginRegistry } from "../plugins/registry.js";
@@ -120,13 +123,14 @@ export async function createGatewayRuntimeState(params: {
     let canvasHost: CanvasHostHandler | null = null;
     if (params.canvasHostEnabled) {
       try {
-        const { createCanvasHostHandler } = await import("../canvas-host/server.js");
+        const { createCanvasHostHandler } = await import("../../extensions/canvas/runtime-api.js");
+        const canvasHostConfig = resolveCanvasHostConfig({ config: params.cfg });
         const handler = await createCanvasHostHandler({
           runtime: params.canvasRuntime,
-          rootDir: params.cfg.canvasHost?.root,
+          rootDir: canvasHostConfig.root,
           basePath: CANVAS_HOST_PATH,
           allowInTests: params.allowCanvasHostInTests,
-          liveReload: params.cfg.canvasHost?.liveReload,
+          liveReload: canvasHostConfig.liveReload,
         });
         if (handler.rootDir) {
           canvasHost = handler;

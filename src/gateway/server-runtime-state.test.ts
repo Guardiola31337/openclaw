@@ -110,4 +110,47 @@ describe("createGatewayRuntimeState", () => {
     expect(logCanvas.info).not.toHaveBeenCalled();
     await runtimeState.canvasHost?.close();
   });
+
+  it("reads canvas host root from plugin config", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "openclaw-canvas-plugin-runtime-"));
+    tempDirs.push(root);
+    const registry = createEmptyPluginRegistry();
+
+    const runtimeState = await createGatewayRuntimeState({
+      cfg: {
+        canvasHost: { root: "/legacy", liveReload: true },
+        plugins: {
+          entries: {
+            canvas: {
+              config: {
+                host: { root, liveReload: false },
+              },
+            },
+          },
+        },
+      },
+      bindHost: "127.0.0.1",
+      port: 18789,
+      controlUiEnabled: false,
+      controlUiBasePath: "/",
+      openAiChatCompletionsEnabled: false,
+      openResponsesEnabled: false,
+      resolvedAuth: {} as never,
+      getResolvedAuth: () => ({}) as never,
+      hooksConfig: () => null,
+      getHookClientIpConfig: () => ({}) as never,
+      pluginRegistry: registry,
+      deps: {} as never,
+      canvasRuntime: { log: () => {} } as never,
+      canvasHostEnabled: true,
+      allowCanvasHostInTests: true,
+      logCanvas: { info: () => {}, warn: () => {} },
+      log: { info: () => {}, warn: () => {} },
+      logHooks: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as never,
+      logPlugins: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as never,
+    });
+
+    expect(runtimeState.canvasHost?.rootDir).toBe(root);
+    await runtimeState.canvasHost?.close();
+  });
 });

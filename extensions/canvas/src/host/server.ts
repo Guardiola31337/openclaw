@@ -10,13 +10,16 @@ import {
   setTimeout as scheduleNativeTimeout,
 } from "node:timers";
 import chokidar from "chokidar";
+import { detectMime } from "openclaw/plugin-sdk/media-mime";
+import { isTruthyEnvValue, type RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+import {
+  ensureDir,
+  lowercasePreservingWhitespace,
+  normalizeOptionalString,
+  resolveUserPath,
+} from "openclaw/plugin-sdk/text-runtime";
 import { type WebSocket, WebSocketServer } from "ws";
-import { resolveStateDir } from "../config/paths.js";
-import { isTruthyEnvValue } from "../infra/env.js";
-import { detectMime } from "../media/mime.js";
-import type { RuntimeEnv } from "../runtime.js";
-import { lowercasePreservingWhitespace, normalizeOptionalString } from "../shared/string-coerce.js";
-import { ensureDir, resolveUserPath } from "../utils.js";
 import {
   CANVAS_HOST_PATH,
   CANVAS_WS_PATH,
@@ -169,9 +172,6 @@ function defaultIndexHTML() {
 }
 
 function isDisabledByEnv() {
-  if (isTruthyEnvValue(process.env.OPENCLAW_SKIP_CANVAS_HOST)) {
-    return true;
-  }
   if (isTruthyEnvValue(process.env.OPENCLAW_SKIP_CANVAS_HOST)) {
     return true;
   }

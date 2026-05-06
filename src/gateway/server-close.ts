@@ -1,8 +1,8 @@
 import type { Server as HttpServer } from "node:http";
 import type { WebSocketServer } from "ws";
+import type { CanvasHostHandler, CanvasHostServer } from "../../extensions/canvas/runtime-api.js";
 import { disposeRegisteredAgentHarnesses } from "../agents/harness/registry.js";
 import { disposeAllSessionMcpRuntimes } from "../agents/pi-bundle-mcp-tools.js";
-import type { CanvasHostHandler, CanvasHostServer } from "../canvas-host/server.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
 import { createInternalHookEvent, triggerInternalHook } from "../hooks/internal-hooks.js";
 import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";

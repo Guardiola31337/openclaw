@@ -5,7 +5,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function getA2uiPaths(env = process.env) {
-  const srcDir = env.OPENCLAW_A2UI_SRC_DIR ?? path.join(repoRoot, "src", "canvas-host", "a2ui");
+  const srcDir =
+    env.OPENCLAW_A2UI_SRC_DIR ?? path.join(repoRoot, "extensions", "canvas", "src", "host", "a2ui");
   const outDir = env.OPENCLAW_A2UI_OUT_DIR ?? path.join(repoRoot, "dist", "canvas-host", "a2ui");
   return { srcDir, outDir };
 }

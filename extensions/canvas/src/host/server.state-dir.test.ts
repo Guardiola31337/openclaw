@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { defaultRuntime } from "openclaw/plugin-sdk/runtime-env";
 import { beforeAll, describe, expect, it } from "vitest";
-import { defaultRuntime } from "../runtime.js";
-import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
+import { withStateDirEnv } from "../../../../src/test-helpers/state-dir-env.js";
 
 describe("canvas host state dir defaults", () => {
   let createCanvasHostHandler: typeof import("./server.js").createCanvasHostHandler;

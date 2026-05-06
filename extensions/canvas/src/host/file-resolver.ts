@@ -1,5 +1,7 @@
 import path from "node:path";
-import { root as fsRoot, FsSafeError, type OpenResult } from "../infra/fs-safe.js";
+import { root as fsRoot, FsSafeError } from "openclaw/plugin-sdk/security-runtime";
+
+type CanvasOpenResult = Awaited<ReturnType<Awaited<ReturnType<typeof fsRoot>>["open"]>>;
 
 export function normalizeUrlPath(rawPath: string): string {
   const decoded = decodeURIComponent(rawPath || "/");
@@ -10,7 +12,7 @@ export function normalizeUrlPath(rawPath: string): string {
 export async function resolveFileWithinRoot(
   rootReal: string,
   urlPath: string,
-): Promise<OpenResult | null> {
+): Promise<CanvasOpenResult | null> {
   const normalized = normalizeUrlPath(urlPath);
   const rel = normalized.replace(/^\/+/, "");
   if (rel.split("/").some((p) => p === "..")) {

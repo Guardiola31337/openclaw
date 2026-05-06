@@ -1,4 +1,4 @@
-import { isLoopbackHost } from "../gateway/net.js";
+import { isLoopbackHost } from "openclaw/plugin-sdk/gateway-runtime";
 
 type HostSource = string | null | undefined;
 

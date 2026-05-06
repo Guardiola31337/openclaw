@@ -22,7 +22,7 @@ if (mode !== "lint" && mode !== "format") {
 
 const lintExts = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const formatExts = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md", ".mdx"]);
-const formatIgnoredPaths = new Set(["src/canvas-host/a2ui/a2ui.bundle.js"]);
+const formatIgnoredPaths = new Set(["extensions/canvas/src/host/a2ui/a2ui.bundle.js"]);
 
 const shouldSelect = (filePath) => {
   const ext = path.extname(filePath).toLowerCase();

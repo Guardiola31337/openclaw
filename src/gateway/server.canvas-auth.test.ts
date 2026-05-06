@@ -1,11 +1,15 @@
 import type { Socket } from "node:net";
 import { describe, expect, test } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
-import { A2UI_PATH, CANVAS_HOST_PATH, CANVAS_WS_PATH } from "../canvas-host/a2ui.js";
-import type { CanvasHostHandler } from "../canvas-host/server.js";
+import {
+  A2UI_PATH,
+  CANVAS_CAPABILITY_PATH_PREFIX,
+  CANVAS_HOST_PATH,
+  CANVAS_WS_PATH,
+  type CanvasHostHandler,
+} from "../../extensions/canvas/runtime-api.js";
 import { createAuthRateLimiter } from "./auth-rate-limit.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
-import { CANVAS_CAPABILITY_PATH_PREFIX } from "./canvas-capability.js";
 import { attachGatewayUpgradeHandler, createGatewayHttpServer } from "./server-http.js";
 import { createPreauthConnectionBudget } from "./server/preauth-connection-budget.js";
 import type { GatewayWsClient } from "./server/ws-types.js";

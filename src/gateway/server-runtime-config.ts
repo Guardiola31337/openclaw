@@ -1,3 +1,4 @@
+import { isCanvasHostEnabled } from "../../extensions/canvas/runtime-api.js";
 import type {
   GatewayAuthConfig,
   GatewayBindMode,
@@ -122,8 +123,7 @@ export async function resolveGatewayRuntimeConfig(params: {
   const hasSharedSecret =
     (authMode === "token" && hasToken) || (authMode === "password" && hasPassword);
   const hooksConfig = resolveHooksConfig(params.cfg);
-  const canvasHostEnabled =
-    process.env.OPENCLAW_SKIP_CANVAS_HOST !== "1" && params.cfg.canvasHost?.enabled !== false;
+  const canvasHostEnabled = isCanvasHostEnabled(params.cfg);
 
   const trustedProxies = params.cfg.gateway?.trustedProxies ?? [];
   const controlUiAllowedOrigins = (params.cfg.gateway?.controlUi?.allowedOrigins ?? [])

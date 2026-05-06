@@ -1,8 +1,7 @@
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
+import { CANVAS_HOST_PATH, type CanvasHostServer } from "../../extensions/canvas/runtime-api.js";
 import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/run-state.js";
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
-import { CANVAS_HOST_PATH } from "../canvas-host/a2ui-shared.js";
-import type { CanvasHostServer } from "../canvas-host/server.js";
 import type { ChannelRuntimeSurface } from "../channels/plugins/channel-runtime-surface.types.js";
 import {
   getLoadedChannelPluginEntryById,

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { resolveCanvasHttpPathToLocalPath } from "../gateway/canvas-documents.js";
+import { resolveCanvasHttpPathToLocalPath } from "../../extensions/canvas/runtime-api.js";
 import { logVerbose, shouldLogVerbose } from "../globals.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { FsSafeError, readLocalFileSafely } from "../infra/fs-safe.js";

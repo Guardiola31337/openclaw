@@ -8,7 +8,7 @@ import {
   resolveCanvasDocumentAssets,
   resolveCanvasDocumentDir,
   resolveCanvasHttpPathToLocalPath,
-} from "./canvas-documents.js";
+} from "./documents.js";
 
 const tempDirs: string[] = [];
 

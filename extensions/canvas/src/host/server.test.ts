@@ -3,8 +3,8 @@ import type { IncomingMessage } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { Duplex } from "node:stream";
+import { defaultRuntime } from "openclaw/plugin-sdk/runtime-env";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultRuntime } from "../runtime.js";
 import {
   A2UI_PATH,
   CANVAS_HOST_PATH,
@@ -354,7 +354,7 @@ describe("canvas host", () => {
   });
 
   it("serves A2UI scaffold and blocks traversal/symlink escapes", async () => {
-    const a2uiRoot = path.resolve(process.cwd(), "src/canvas-host/a2ui");
+    const a2uiRoot = path.resolve(process.cwd(), "extensions/canvas/src/host/a2ui");
     const bundlePath = path.join(a2uiRoot, "a2ui.bundle.js");
     const linkName = `test-link-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`;
     const linkPath = path.join(a2uiRoot, linkName);

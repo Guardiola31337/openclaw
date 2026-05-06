@@ -11,8 +11,10 @@ const fromHere = (p) => path.resolve(here, p);
 const outputFile = path.resolve(
   here,
   "../../../../..",
+  "extensions",
+  "canvas",
   "src",
-  "canvas-host",
+  "host",
   "a2ui",
   "a2ui.bundle.js",
 );

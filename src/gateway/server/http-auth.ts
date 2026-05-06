@@ -1,5 +1,10 @@
 import type { IncomingMessage } from "node:http";
-import { A2UI_PATH, CANVAS_HOST_PATH, CANVAS_WS_PATH } from "../../canvas-host/a2ui.js";
+import {
+  A2UI_PATH,
+  CANVAS_CAPABILITY_TTL_MS,
+  CANVAS_HOST_PATH,
+  CANVAS_WS_PATH,
+} from "../../../extensions/canvas/runtime-api.js";
 import { safeEqualSecret } from "../../security/secret-equal.js";
 import type { AuthRateLimiter } from "../auth-rate-limit.js";
 import {
@@ -7,7 +12,6 @@ import {
   type GatewayAuthResult,
   type ResolvedGatewayAuth,
 } from "../auth.js";
-import { CANVAS_CAPABILITY_TTL_MS } from "../canvas-capability.js";
 import { getBearerToken, resolveHttpBrowserOriginPolicy } from "../http-auth-utils.js";
 import type { GatewayWsClient } from "./ws-types.js";
 

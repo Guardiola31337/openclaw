@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import {
+  buildCanvasScopedHostUrl,
+  CANVAS_CAPABILITY_TTL_MS,
+  mintCanvasCapabilityToken,
+} from "../../../extensions/canvas/runtime-api.js";
 import { getRuntimeConfig } from "../../config/io.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { listDevicePairing } from "../../infra/device-pairing.js";
@@ -25,13 +30,12 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "../../shared/string-coerce.js";
-import {
-  buildCanvasScopedHostUrl,
-  CANVAS_CAPABILITY_TTL_MS,
-  mintCanvasCapabilityToken,
-} from "../canvas-capability.js";
 import { createKnownNodeCatalog, getKnownNode, listKnownNodes } from "../node-catalog.js";
-import { isNodeCommandAllowed, resolveNodeCommandAllowlist } from "../node-command-policy.js";
+import {
+  isForegroundRestrictedPluginNodeCommand,
+  isNodeCommandAllowed,
+  resolveNodeCommandAllowlist,
+} from "../node-command-policy.js";
 import { applyPluginNodeInvokePolicy } from "../node-invoke-plugin-policy.js";
 import { sanitizeNodeInvokeParamsForForwarding } from "../node-invoke-sanitize.js";
 import {
@@ -179,9 +183,7 @@ async function delayMs(ms: number): Promise<void> {
 
 function isForegroundRestrictedIosCommand(command: string): boolean {
   return (
-    command === "canvas.present" ||
-    command === "canvas.navigate" ||
-    command.startsWith("canvas.") ||
+    isForegroundRestrictedPluginNodeCommand(command) ||
     command.startsWith("camera.") ||
     command.startsWith("screen.") ||
     command.startsWith("talk.")

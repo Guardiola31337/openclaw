@@ -10,8 +10,8 @@ export const runNodeWatchedPaths = [...runNodeSourceRoots, ...runNodeConfigFiles
 export const extensionRestartMetadataFiles = new Set(["openclaw.plugin.json", "package.json"]);
 
 const ignoredRunNodeRepoPaths = new Set([
-  "src/canvas-host/a2ui/.bundle.hash",
-  "src/canvas-host/a2ui/a2ui.bundle.js",
+  "extensions/canvas/src/host/a2ui/.bundle.hash",
+  "extensions/canvas/src/host/a2ui/a2ui.bundle.js",
 ]);
 const extensionSourceFilePattern = /\.(?:[cm]?[jt]sx?)$/;
 

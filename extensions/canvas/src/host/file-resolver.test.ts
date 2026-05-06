@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createTrackedTempDirs } from "../test-utils/tracked-temp-dirs.js";
+import { createTrackedTempDirs } from "../../../../src/test-utils/tracked-temp-dirs.js";
 import { normalizeUrlPath, resolveFileWithinRoot } from "./file-resolver.js";
 
 const tempDirs = createTrackedTempDirs();

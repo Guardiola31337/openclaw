@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveCanvasHostUrl } from "./canvas-host-url.js";
+import { resolveCanvasHostUrl } from "./host-url.js";
 
 describe("resolveCanvasHostUrl", () => {
   it.each([

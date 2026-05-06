@@ -1,18 +1,21 @@
-import crypto from "node:crypto";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import {
+  callGatewayTool,
+  listNodes,
+  resolveNodeIdFromList,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
+import {
+  imageResultFromFile,
+  jsonResult,
+  optionalStringEnum,
+  readStringParam,
+  stringEnum,
+} from "openclaw/plugin-sdk/channel-actions";
+import type { AnyAgentTool, OpenClawConfig } from "openclaw/plugin-sdk/plugin-entry";
 import { Type } from "typebox";
-import { writeBase64ToFile } from "../../cli/nodes-camera.js";
-import { canvasSnapshotTempPath, parseCanvasSnapshotPayload } from "../../cli/nodes-canvas.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { logVerbose, shouldLogVerbose } from "../../globals.js";
-import { readLocalFileFromRoots } from "../../infra/fs-safe.js";
-import { getDefaultMediaLocalRoots } from "../../media/local-roots.js";
-import { imageMimeFromFormat } from "../../media/mime.js";
-import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
-import { resolveImageSanitizationLimits } from "../image-sanitization.js";
-import { optionalStringEnum, stringEnum } from "../schema/typebox.js";
-import { type AnyAgentTool, imageResult, jsonResult, readStringParam } from "./common.js";
-import { callGatewayTool, readGatewayCallOptions } from "./gateway.js";
-import { resolveNodeId } from "./nodes-utils.js";
 
 const CANVAS_ACTIONS = [
   "present",
@@ -26,24 +29,65 @@ const CANVAS_ACTIONS = [
 
 const CANVAS_SNAPSHOT_FORMATS = ["png", "jpg", "jpeg"] as const;
 
-async function readJsonlFromPath(jsonlPath: string): Promise<string> {
+type CanvasToolOptions = {
+  config?: OpenClawConfig;
+  workspaceDir?: string;
+};
+
+type CanvasSnapshotPayload = {
+  format: string;
+  base64: string;
+};
+
+function readGatewayCallOptions(params: Record<string, unknown>) {
+  return {
+    gatewayUrl: readStringParam(params, "gatewayUrl", { trim: false }),
+    gatewayToken: readStringParam(params, "gatewayToken", { trim: false }),
+    timeoutMs: typeof params.timeoutMs === "number" ? params.timeoutMs : undefined,
+  };
+}
+
+async function resolveNodeId(
+  opts: ReturnType<typeof readGatewayCallOptions>,
+  query?: string,
+  allowDefault = false,
+): Promise<string> {
+  return resolveNodeIdFromList(await listNodes(opts), query, allowDefault);
+}
+
+function parseCanvasSnapshotPayload(value: unknown): CanvasSnapshotPayload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("invalid canvas.snapshot payload");
+  }
+  const record = value as Record<string, unknown>;
+  const format = typeof record.format === "string" ? record.format : "";
+  const base64 = typeof record.base64 === "string" ? record.base64 : "";
+  if (!format || !base64) {
+    throw new Error("invalid canvas.snapshot payload");
+  }
+  return { format, base64 };
+}
+
+async function writeBase64ToTempFile(params: { base64: string; ext: string }): Promise<string> {
+  const dir = path.join(os.tmpdir(), "openclaw");
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  const ext = params.ext.startsWith(".") ? params.ext : `.${params.ext}`;
+  const filePath = path.join(dir, `openclaw-canvas-snapshot-${randomUUID()}${ext}`);
+  await fs.writeFile(filePath, Buffer.from(params.base64, "base64"));
+  return filePath;
+}
+
+async function readJsonlFromPath(jsonlPath: string, workspaceDir?: string): Promise<string> {
   const trimmed = jsonlPath.trim();
   if (!trimmed) {
     return "";
   }
-  const roots = getDefaultMediaLocalRoots();
-  const result = await readLocalFileFromRoots({
-    filePath: trimmed,
-    roots,
-    label: "canvas jsonlPath",
-  });
-  if (!result) {
-    if (shouldLogVerbose()) {
-      logVerbose(`Blocked canvas jsonlPath outside allowed roots: ${trimmed}`);
-    }
-    throw new Error("jsonlPath outside allowed roots");
+  const resolved = path.resolve(workspaceDir ?? process.cwd(), trimmed);
+  const workspaceRoot = path.resolve(workspaceDir ?? process.cwd());
+  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}${path.sep}`)) {
+    throw new Error("jsonlPath outside workspace");
   }
-  return result.buffer.toString("utf8");
+  return await fs.readFile(resolved, "utf8");
 }
 
 // Flattened schema: runtime validates per-action requirements.
@@ -53,28 +97,22 @@ const CanvasToolSchema = Type.Object({
   gatewayToken: Type.Optional(Type.String()),
   timeoutMs: Type.Optional(Type.Number()),
   node: Type.Optional(Type.String()),
-  // present
   target: Type.Optional(Type.String()),
   x: Type.Optional(Type.Number()),
   y: Type.Optional(Type.Number()),
   width: Type.Optional(Type.Number()),
   height: Type.Optional(Type.Number()),
-  // navigate
   url: Type.Optional(Type.String()),
-  // eval
   javaScript: Type.Optional(Type.String()),
-  // snapshot
   outputFormat: optionalStringEnum(CANVAS_SNAPSHOT_FORMATS),
   maxWidth: Type.Optional(Type.Number()),
   quality: Type.Optional(Type.Number()),
   delayMs: Type.Optional(Type.Number()),
-  // a2ui_push
   jsonl: Type.Optional(Type.String()),
   jsonlPath: Type.Optional(Type.String()),
 });
 
-export function createCanvasTool(options?: { config?: OpenClawConfig }): AnyAgentTool {
-  const imageSanitization = resolveImageSanitizationLimits(options?.config);
+export function createCanvasTool(options?: CanvasToolOptions): AnyAgentTool {
   return {
     label: "Canvas",
     name: "canvas",
@@ -97,7 +135,7 @@ export function createCanvasTool(options?: { config?: OpenClawConfig }): AnyAgen
           nodeId,
           command,
           params: invokeParams,
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: randomUUID(),
         });
 
       switch (action) {
@@ -109,8 +147,6 @@ export function createCanvasTool(options?: { config?: OpenClawConfig }): AnyAgen
             height: typeof params.height === "number" ? params.height : undefined,
           };
           const invokeParams: Record<string, unknown> = {};
-          // Accept both `target` and `url` for present to match common caller expectations.
-          // `target` remains the canonical field for CLI compatibility.
           const presentTarget =
             readStringParam(params, "target", { trim: true }) ??
             readStringParam(params, "url", { trim: true });
@@ -132,7 +168,6 @@ export function createCanvasTool(options?: { config?: OpenClawConfig }): AnyAgen
           await invoke("canvas.hide", undefined);
           return jsonResult({ ok: true });
         case "navigate": {
-          // Support `target` as an alias so callers can reuse the same field across present/navigate.
           const url =
             readStringParam(params, "url", { trim: true }) ??
             readStringParam(params, "target", { required: true, trim: true, label: "url" });
@@ -156,7 +191,10 @@ export function createCanvasTool(options?: { config?: OpenClawConfig }): AnyAgen
           return jsonResult({ ok: true });
         }
         case "snapshot": {
-          const formatRaw = normalizeLowercaseStringOrEmpty(params.outputFormat) || "png";
+          const formatRaw =
+            typeof params.outputFormat === "string" && params.outputFormat.trim()
+              ? params.outputFormat.trim().toLowerCase()
+              : "png";
           const format = formatRaw === "jpg" || formatRaw === "jpeg" ? "jpeg" : "png";
           const maxWidth =
             typeof params.maxWidth === "number" && Number.isFinite(params.maxWidth)
@@ -172,18 +210,14 @@ export function createCanvasTool(options?: { config?: OpenClawConfig }): AnyAgen
             quality,
           })) as { payload?: unknown };
           const payload = parseCanvasSnapshotPayload(raw?.payload);
-          const filePath = canvasSnapshotTempPath({
+          const filePath = await writeBase64ToTempFile({
+            base64: payload.base64,
             ext: payload.format === "jpeg" ? "jpg" : payload.format,
           });
-          await writeBase64ToFile(filePath, payload.base64);
-          const mimeType = imageMimeFromFormat(payload.format) ?? "image/png";
-          return await imageResult({
+          return await imageResultFromFile({
             label: "canvas:snapshot",
             path: filePath,
-            base64: payload.base64,
-            mimeType,
             details: { format: payload.format },
-            imageSanitization,
           });
         }
         case "a2ui_push": {
@@ -191,7 +225,7 @@ export function createCanvasTool(options?: { config?: OpenClawConfig }): AnyAgen
             typeof params.jsonl === "string" && params.jsonl.trim()
               ? params.jsonl
               : typeof params.jsonlPath === "string" && params.jsonlPath.trim()
-                ? await readJsonlFromPath(params.jsonlPath)
+                ? await readJsonlFromPath(params.jsonlPath, options?.workspaceDir)
                 : "";
           if (!jsonl.trim()) {
             throw new Error("jsonl or jsonlPath required");

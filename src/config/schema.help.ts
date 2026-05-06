@@ -437,15 +437,15 @@ export const FIELD_HELP: Record<string, string> = {
   "web.whatsapp.defaultQueryTimeoutMs":
     "Default Baileys query timeout in milliseconds for WhatsApp Web requests. Keep aligned with upstream unless a network-specific investigation shows queries need longer.",
   canvasHost:
-    "Canvas host settings for serving canvas assets and local live-reload behavior used by canvas-enabled workflows. Keep disabled unless canvas-hosted assets are actively used.",
+    "Legacy Canvas host settings. Prefer plugins.entries.canvas.config.host for new config; this compatibility alias still serves existing canvas-enabled workflows.",
   "canvasHost.enabled":
-    "Enables the canvas host server process and routes for serving canvas files. Keep disabled when canvas workflows are inactive to reduce exposed local services.",
+    "Legacy alias for enabling the Canvas host server. Prefer plugins.entries.canvas.config.host.enabled for new config.",
   "canvasHost.root":
-    "Filesystem root directory served by canvas host for canvas content and static assets. Use a dedicated directory and avoid broad repo roots for least-privilege file exposure.",
+    "Legacy alias for the Canvas host root directory. Prefer plugins.entries.canvas.config.host.root for new config.",
   "canvasHost.port":
-    "TCP port used by the canvas host HTTP server when canvas hosting is enabled. Choose a non-conflicting port and align firewall/proxy policy accordingly.",
+    "Legacy alias for the Canvas host HTTP port. Prefer plugins.entries.canvas.config.host.port for new config.",
   "canvasHost.liveReload":
-    "Enables automatic live-reload behavior for canvas assets during development workflows. Keep disabled in production-like environments where deterministic output is preferred.",
+    "Legacy alias for Canvas live-reload behavior. Prefer plugins.entries.canvas.config.host.liveReload for new config.",
   talk: "Talk-mode voice synthesis settings for voice identity, model selection, output format, and interruption behavior. Use this section to tune human-facing voice UX while controlling latency and cost.",
   "gateway.auth.token":
     "Required by default for gateway access (unless using Tailscale Serve identity); required for non-loopback binds.",

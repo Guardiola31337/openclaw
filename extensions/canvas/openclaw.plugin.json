@@ -1,0 +1,37 @@
+{
+  "id": "canvas",
+  "activation": {
+    "onStartup": false
+  },
+  "enabledByDefault": true,
+  "name": "Canvas",
+  "description": "Experimental Canvas control and A2UI rendering surfaces for paired nodes.",
+  "contracts": {
+    "tools": ["canvas"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "host": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "root": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "liveReload": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

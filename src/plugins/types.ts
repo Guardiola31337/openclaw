@@ -2143,6 +2143,21 @@ export type OpenClawPluginNodeInvokePolicyResult =
 
 export type OpenClawPluginNodeInvokePolicy = {
   commands: string[];
+  /**
+   * Platforms where these node-handled commands should be allowlisted by default.
+   * Omit for commands that require explicit `gateway.nodes.allowCommands`.
+   */
+  defaultPlatforms?: Array<"ios" | "android" | "macos" | "windows" | "linux" | "unknown">;
+  /**
+   * Dangerous policy commands are filtered out of default allowlists unless
+   * explicitly allowed by config.
+   */
+  dangerous?: boolean;
+  /**
+   * iOS foreground-restricted commands should be queued for foreground delivery
+   * when an iOS node reports BACKGROUND_UNAVAILABLE.
+   */
+  foregroundRestrictedOnIos?: boolean;
   handle: (
     ctx: OpenClawPluginNodeInvokePolicyContext,
   ) => Promise<OpenClawPluginNodeInvokePolicyResult> | OpenClawPluginNodeInvokePolicyResult;

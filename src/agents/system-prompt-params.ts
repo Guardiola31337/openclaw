@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { resolveCanvasHostConfig } from "../../extensions/canvas/runtime-api.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { findGitRoot } from "../infra/git-root.js";
@@ -69,7 +70,7 @@ export function buildSystemPromptParams(params: {
 }
 
 function resolveCanvasRootDir(params: { config?: OpenClawConfig; stateDir: string }): string {
-  const configured = params.config?.canvasHost?.root?.trim();
+  const configured = resolveCanvasHostConfig({ config: params.config }).root?.trim();
   if (configured) {
     return path.resolve(
       resolveHomeRelativePath(configured, {

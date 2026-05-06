@@ -57,7 +57,7 @@ export const BUILD_ALL_STEPS = [
     kind: "node",
     args: ["--import", "tsx", "scripts/canvas-a2ui-copy.ts"],
     cache: {
-      inputs: ["scripts/canvas-a2ui-copy.ts", "src/canvas-host/a2ui"],
+      inputs: ["scripts/canvas-a2ui-copy.ts", "extensions/canvas/src/host/a2ui"],
       outputs: ["dist/canvas-host/a2ui/index.html", "dist/canvas-host/a2ui/a2ui.bundle.js"],
     },
   },

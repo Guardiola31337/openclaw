@@ -495,8 +495,8 @@ const SOURCE_TEST_TARGETS = new Map([
   ],
 ]);
 const GENERATED_CHANGED_TEST_TARGETS = new Set([
-  "src/canvas-host/a2ui/.bundle.hash",
-  "src/canvas-host/a2ui/a2ui.bundle.js",
+  "extensions/canvas/src/host/a2ui/.bundle.hash",
+  "extensions/canvas/src/host/a2ui/a2ui.bundle.js",
 ]);
 const SOURCE_ROOTS_FOR_IMPORT_GRAPH = ["src", "extensions", "packages", "ui/src", "test"];
 const IMPORTABLE_FILE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];

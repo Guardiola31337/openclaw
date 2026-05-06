@@ -40,11 +40,11 @@ export type DiscoveryConfig = {
 
 export type CanvasHostConfig = {
   enabled?: boolean;
-  /** Directory to serve (default: ~/.openclaw/workspace/canvas). */
+  /** Legacy alias for plugins.entries.canvas.config.host.root. */
   root?: string;
-  /** HTTP port to listen on (default: 18793). */
+  /** Legacy alias for plugins.entries.canvas.config.host.port. */
   port?: number;
-  /** Enable live-reload file watching + WS reloads (default: true). */
+  /** Legacy alias for plugins.entries.canvas.config.host.liveReload. */
   liveReload?: boolean;
 };
 

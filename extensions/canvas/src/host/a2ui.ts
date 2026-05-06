@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectMime } from "../media/mime.js";
-import { lowercasePreservingWhitespace } from "../shared/string-coerce.js";
+import { detectMime } from "openclaw/plugin-sdk/media-mime";
+import { lowercasePreservingWhitespace } from "openclaw/plugin-sdk/text-runtime";
 import { A2UI_PATH, injectCanvasLiveReload, isA2uiPath } from "./a2ui-shared.js";
 import { resolveFileWithinRoot } from "./file-resolver.js";
 
@@ -24,24 +24,19 @@ async function resolveA2uiRoot(): Promise<string | null> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const entryDir = process.argv[1] ? path.dirname(path.resolve(process.argv[1])) : null;
   const candidates = [
-    // Running from source (bun) or dist/canvas-host chunk.
+    // Running from source (bun) or a copied dist asset chunk.
     path.resolve(here, "a2ui"),
     // Running from dist root chunk (common launchd path).
     path.resolve(here, "canvas-host/a2ui"),
-    path.resolve(here, "../canvas-host/a2ui"),
     // Entry path fallbacks (helps when cwd is not the repo root).
     ...(entryDir
-      ? [
-          path.resolve(entryDir, "a2ui"),
-          path.resolve(entryDir, "canvas-host/a2ui"),
-          path.resolve(entryDir, "../canvas-host/a2ui"),
-        ]
+      ? [path.resolve(entryDir, "a2ui"), path.resolve(entryDir, "canvas-host/a2ui")]
       : []),
     // Running from dist without copied assets (fallback to source).
-    path.resolve(here, "../../src/canvas-host/a2ui"),
-    path.resolve(here, "../src/canvas-host/a2ui"),
+    path.resolve(here, "../../extensions/canvas/src/host/a2ui"),
+    path.resolve(here, "../extensions/canvas/src/host/a2ui"),
     // Running from repo root.
-    path.resolve(process.cwd(), "src/canvas-host/a2ui"),
+    path.resolve(process.cwd(), "extensions/canvas/src/host/a2ui"),
     path.resolve(process.cwd(), "dist/canvas-host/a2ui"),
   ];
   if (process.execPath) {

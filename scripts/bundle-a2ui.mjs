@@ -11,8 +11,16 @@ import { resolvePnpmRunner } from "./pnpm-runner.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
-const hashFile = path.join(rootDir, "src", "canvas-host", "a2ui", ".bundle.hash");
-const outputFile = path.join(rootDir, "src", "canvas-host", "a2ui", "a2ui.bundle.js");
+const hashFile = path.join(rootDir, "extensions", "canvas", "src", "host", "a2ui", ".bundle.hash");
+const outputFile = path.join(
+  rootDir,
+  "extensions",
+  "canvas",
+  "src",
+  "host",
+  "a2ui",
+  "a2ui.bundle.js",
+);
 const a2uiAppDir = path.join(rootDir, "apps", "shared", "OpenClawKit", "Tools", "CanvasA2UI");
 const rootPackageFile = path.join(rootDir, "package.json");
 const lockFile = path.join(rootDir, "pnpm-lock.yaml");
