@@ -294,6 +294,44 @@ describe("matrixApprovalNativeRuntime", () => {
     expectRecordFields(mockCall(reactMessage)?.[3], { accountId: "default" });
   });
 
+  it("preserves plugin command actions in Matrix fallback text", async () => {
+    const view = buildPluginApprovalView({
+      actions: [
+        {
+          kind: "command",
+          label: "Verify with World",
+          style: "primary",
+          command: "/agentkit approve plugin:req-1 allow-once",
+        },
+        {
+          kind: "decision",
+          decision: "deny",
+          label: "Deny",
+          style: "danger",
+          command: "/approve plugin:req-1 deny",
+        },
+      ],
+    });
+    const pendingPayload = await buildPendingPayload(view);
+
+    expect(pendingPayload.text).toContain("/agentkit approve plugin:req-1 allow-once");
+    expect(pendingPayload.text).toContain("/approve plugin:req-1 deny");
+    expect(pendingPayload.text).not.toContain("/approve <id>");
+    expect(pendingPayload.extraContent[MATRIX_APPROVAL_METADATA_KEY].actions).toEqual([
+      {
+        label: "Verify with World",
+        style: "primary",
+        command: "/agentkit approve plugin:req-1 allow-once",
+      },
+      {
+        decision: "deny",
+        label: "Deny",
+        style: "danger",
+        command: "/approve plugin:req-1 deny",
+      },
+    ]);
+  });
+
   it("binds Matrix approval reactions before publishing option reactions", async () => {
     const sendSingleTextMessage = vi.fn().mockResolvedValue({
       messageId: "$approval",

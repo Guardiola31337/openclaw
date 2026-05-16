@@ -295,11 +295,42 @@ function listDecisionActions(view: PendingApprovalView): ExecApprovalReplyDecisi
   return view.actions.flatMap((action) => (action.decision ? [action.decision] : []));
 }
 
+function listPluginApprovalActionDescriptors(
+  view: PendingApprovalView,
+): NonNullable<PluginApprovalRequest["request"]["actions"]> | undefined {
+  if (view.approvalKind !== "plugin") {
+    return undefined;
+  }
+
+  const actions: NonNullable<PluginApprovalRequest["request"]["actions"]> = view.actions.flatMap(
+    (action) => {
+      if (
+        (action.kind !== "command" && action.kind !== "decision") ||
+        !action.command.trim() ||
+        !action.label.trim()
+      ) {
+        return [];
+      }
+      return [
+        {
+          kind: action.kind,
+          label: action.label,
+          style: action.style,
+          command: action.command,
+          ...(action.decision ? { decision: action.decision } : {}),
+        },
+      ];
+    },
+  );
+  return actions.length > 0 ? actions : undefined;
+}
+
 function buildPendingApprovalContent(params: {
   view: PendingApprovalView;
   nowMs: number;
 }): PendingApprovalContent {
   const allowedDecisions = listDecisionActions(params.view);
+  const pluginActions = listPluginApprovalActionDescriptors(params.view);
   const payload =
     params.view.approvalKind === "plugin"
       ? buildPluginApprovalPendingReplyPayload({
@@ -312,6 +343,7 @@ function buildPendingApprovalContent(params: {
               toolName: params.view.toolName ?? undefined,
               pluginId: params.view.pluginId ?? undefined,
               agentId: params.view.agentId ?? undefined,
+              actions: pluginActions,
             },
             createdAtMs: 0,
             expiresAtMs: params.view.expiresAtMs,
