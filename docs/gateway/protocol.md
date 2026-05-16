@@ -455,6 +455,9 @@ enumeration of `src/gateway/server-methods/*.ts`.
     - `exec.approvals.get` and `exec.approvals.set` manage gateway exec approval policy snapshots.
     - `exec.approvals.node.get` and `exec.approvals.node.set` manage node-local exec approval policy via node relay commands.
     - `plugin.approval.request`, `plugin.approval.list`, `plugin.approval.waitDecision`, and `plugin.approval.resolve` cover plugin-defined approval flows.
+    - `plugin.approval.resolveVerified` resolves a plugin-owned pending approval after the plugin has independently
+      verified its approval proof. It requires `operator.admin`, an approval `id`, a `decision`, and the owning
+      `pluginId`.
 
   </Accordion>
 
@@ -615,6 +618,22 @@ terminal summary, and sanitized error text.
 - If a caller mutates `command`, `rawCommand`, `cwd`, `agentId`, or
   `sessionKey` between prepare and the final approved `system.run` forward, the
   gateway rejects the run instead of trusting the mutated payload.
+
+## Plugin approvals
+
+- Plugins create pending approval records with `plugin.approval.request` and can
+  read or wait on visible records with `plugin.approval.list` and
+  `plugin.approval.waitDecision`.
+- `plugin.approval.resolve` requires `operator.approvals` and can choose only a
+  decision allowed by the pending approval request.
+- `plugin.approval.resolveVerified` requires `operator.admin` and is for
+  plugin-owned proof-backed approval flows. The request must include `{ "id":
+string, "decision": "allow-once" | "allow-always" | "deny", "pluginId":
+string }`. The gateway resolves the record only when the pending request's
+  `pluginId` matches the supplied `pluginId`.
+- Public plugin SDK callers should use the focused
+  `resolveVerifiedPluginApprovalOverGateway` helper instead of creating a
+  generic admin-scoped Gateway client.
 
 ## Agent delivery fallback
 

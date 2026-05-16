@@ -5798,6 +5798,28 @@ public struct PluginApprovalResolveParams: Codable, Sendable {
     }
 }
 
+public struct PluginApprovalResolveVerifiedParams: Codable, Sendable {
+    public let id: String
+    public let decision: String
+    public let pluginid: String
+
+    public init(
+        id: String,
+        decision: String,
+        pluginid: String)
+    {
+        self.id = id
+        self.decision = decision
+        self.pluginid = pluginid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case decision
+        case pluginid = "pluginId"
+    }
+}
+
 public struct PluginControlUiDescriptor: Codable, Sendable {
     public let id: String
     public let pluginid: String

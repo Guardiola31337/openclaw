@@ -63,3 +63,12 @@ export const PluginApprovalResolveParamsSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const PluginApprovalResolveVerifiedParamsSchema = Type.Object(
+  {
+    id: NonEmptyString,
+    decision: NonEmptyString,
+    pluginId: NonEmptyString,
+  },
+  { additionalProperties: false },
+);

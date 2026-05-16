@@ -64,9 +64,10 @@ vi.mock("./client.js", () => ({
   GatewayClient: MockGatewayClient,
 }));
 
-const { withOperatorApprovalsGatewayClient } = await import("./operator-approvals-client.js");
+const { resolveVerifiedPluginApprovalOverGateway, withOperatorApprovalsGatewayClient } =
+  await import("./operator-approvals-client.js");
 
-describe("withOperatorApprovalsGatewayClient", () => {
+describe("operator approval gateway client helpers", () => {
   beforeEach(() => {
     clientState.options = null;
     clientState.startMode = "hello";
@@ -98,6 +99,26 @@ describe("withOperatorApprovalsGatewayClient", () => {
     expect(clientState.requestSpy).toHaveBeenCalledWith("exec.approval.resolve", {
       id: "req-123",
       decision: "allow-once",
+    });
+    expect(clientState.stopAndWaitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves verified plugin approvals through a narrow admin-scoped helper", async () => {
+    await resolveVerifiedPluginApprovalOverGateway({
+      config: {} as never,
+      clientDisplayName: "AgentKit proof-backed approval",
+      approvalId: "plugin:req-123",
+      decision: "allow-once",
+      pluginId: "agentkit",
+    });
+
+    expect(clientState.options?.scopes).toEqual(["operator.admin"]);
+    expect(clientState.options).not.toHaveProperty("approvalRuntimeToken");
+    expect(clientState.options?.deviceIdentity).toBeNull();
+    expect(clientState.requestSpy).toHaveBeenCalledWith("plugin.approval.resolveVerified", {
+      id: "plugin:req-123",
+      decision: "allow-once",
+      pluginId: "agentkit",
     });
     expect(clientState.stopAndWaitSpy).toHaveBeenCalledTimes(1);
   });

@@ -19,6 +19,7 @@ import {
   formatValidationErrors,
   validatePluginApprovalRequestParams,
   validatePluginApprovalResolveParams,
+  validatePluginApprovalResolveVerifiedParams,
 } from "../protocol/index.js";
 import {
   handleApprovalResolve,
@@ -212,6 +213,60 @@ export function createPluginApprovalHandlers(
                 details: {
                   allowedDecisions: resolvePluginApprovalRequestAllowedDecisions(snapshot.request),
                 },
+              },
+        resolvedEventName: "plugin.approval.resolved",
+        buildResolvedEvent: ({ approvalId, decision, resolvedBy, snapshot, nowMs }) => ({
+          id: approvalId,
+          decision,
+          resolvedBy,
+          ts: nowMs,
+          request: snapshot.request,
+        }),
+        forwardResolved: (resolvedEvent) =>
+          opts?.forwarder?.handlePluginApprovalResolved?.(resolvedEvent),
+        forwardResolvedErrorLabel: "plugin approvals: forward resolve failed",
+      });
+    },
+
+    "plugin.approval.resolveVerified": async ({ params, respond, client, context }) => {
+      if (!validatePluginApprovalResolveVerifiedParams(params)) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            `invalid plugin.approval.resolveVerified params: ${formatValidationErrors(
+              validatePluginApprovalResolveVerifiedParams.errors,
+            )}`,
+          ),
+        );
+        return;
+      }
+      const p = params as { id: string; decision: string; pluginId: string };
+      if (!isApprovalDecision(p.decision)) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid decision"));
+        return;
+      }
+      const pluginId = normalizeOptionalString(p.pluginId);
+      if (!pluginId) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "pluginId is required"));
+        return;
+      }
+      const decision = p.decision;
+      await handleApprovalResolve({
+        manager,
+        inputId: p.id,
+        decision,
+        respond,
+        context,
+        client,
+        exposeAmbiguousPrefixError: false,
+        validateDecision: (snapshot) =>
+          normalizeOptionalString(snapshot.request.pluginId) === pluginId
+            ? null
+            : {
+                message: "plugin approval is not owned by the requested plugin",
+                details: { pluginId },
               },
         resolvedEventName: "plugin.approval.resolved",
         buildResolvedEvent: ({ approvalId, decision, resolvedBy, snapshot, nowMs }) => ({

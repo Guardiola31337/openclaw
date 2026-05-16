@@ -135,6 +135,7 @@ function broadcastCall(opts: GatewayRequestHandlerOptions, index = 0) {
 const invalidParamMethodCases = [
   { method: "plugin.approval.request" },
   { method: "plugin.approval.resolve" },
+  { method: "plugin.approval.resolveVerified" },
 ] as const;
 
 describe("createPluginApprovalHandlers", () => {
@@ -154,6 +155,7 @@ describe("createPluginApprovalHandlers", () => {
       "plugin.approval.list",
       "plugin.approval.request",
       "plugin.approval.resolve",
+      "plugin.approval.resolveVerified",
       "plugin.approval.waitDecision",
     ]);
   });
@@ -803,6 +805,74 @@ describe("createPluginApprovalHandlers", () => {
       expect(error.details).toEqual({ allowedDecisions: ["allow-once", "deny"] });
       expect(manager.getSnapshot(record.id)?.decision).toBeUndefined();
     });
+
+    it("allows verified plugin resolution outside visible approval decisions", async () => {
+      const handlers = createPluginApprovalHandlers(manager);
+      const record = manager.create(
+        {
+          title: "T",
+          description: "D",
+          pluginId: "agentkit",
+          allowedDecisions: ["deny"],
+        },
+        60_000,
+      );
+      void manager.register(record, 60_000);
+
+      const opts = createMockOptions("plugin.approval.resolveVerified", {
+        id: record.id,
+        decision: "allow-once",
+        pluginId: "agentkit",
+      });
+      await handlers["plugin.approval.resolveVerified"](opts);
+      expect(opts.respond).toHaveBeenCalledWith(true, { ok: true }, undefined);
+      expect(manager.getSnapshot(record.id)?.decision).toBe("allow-once");
+      const resolvedBroadcast = broadcastCall(opts);
+      expect(resolvedBroadcast.event).toBe("plugin.approval.resolved");
+      expect(resolvedBroadcast.payload.id).toBe(record.id);
+      expect(resolvedBroadcast.payload.decision).toBe("allow-once");
+    });
+
+    it.each([
+      {
+        name: "mismatched plugin id",
+        requestPluginId: "agentkit",
+        resolvePluginId: "other-plugin",
+      },
+      {
+        name: "missing request plugin id",
+        requestPluginId: null,
+        resolvePluginId: "agentkit",
+      },
+    ])(
+      "rejects verified plugin resolution for $name",
+      async ({ requestPluginId, resolvePluginId }) => {
+        const handlers = createPluginApprovalHandlers(manager);
+        const record = manager.create(
+          {
+            title: "T",
+            description: "D",
+            pluginId: requestPluginId,
+            allowedDecisions: ["deny"],
+          },
+          60_000,
+        );
+        void manager.register(record, 60_000);
+
+        const opts = createMockOptions("plugin.approval.resolveVerified", {
+          id: record.id,
+          decision: "allow-once",
+          pluginId: resolvePluginId,
+        });
+        await handlers["plugin.approval.resolveVerified"](opts);
+        expect(responseCall(opts.respond as unknown as MockCallSource).ok).toBe(false);
+        const error = responseError(opts.respond as unknown as MockCallSource);
+        expect(error.code).toBe("INVALID_REQUEST");
+        expect(error.message).toBe("plugin approval is not owned by the requested plugin");
+        expect(error.details).toEqual({ pluginId: resolvePluginId });
+        expect(manager.getSnapshot(record.id)?.decision).toBeUndefined();
+      },
+    );
 
     it("rejects unknown approval id", async () => {
       const handlers = createPluginApprovalHandlers(manager);

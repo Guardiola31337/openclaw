@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { ExecApprovalDecision } from "../infra/exec-approvals.js";
 import { isLoopbackIpAddress } from "../shared/net/ip.js";
 import { resolveGatewayClientBootstrap } from "./client-bootstrap.js";
 import { startGatewayClientWhenEventLoopReady } from "./client-start-readiness.js";
@@ -17,6 +18,14 @@ function isLoopbackGatewayUrl(rawUrl: string): boolean {
   }
 }
 
+type OperatorGatewayClientFactoryParams = Pick<
+  GatewayClientOptions,
+  "clientDisplayName" | "onClose" | "onConnectError" | "onEvent" | "onHelloOk" | "onReconnectPaused"
+> & {
+  config: OpenClawConfig;
+  gatewayUrl?: string;
+};
+
 function shouldOmitOperatorApprovalDeviceIdentity(params: {
   url: string;
   token?: string;
@@ -25,18 +34,10 @@ function shouldOmitOperatorApprovalDeviceIdentity(params: {
   return Boolean((params.token || params.password) && isLoopbackGatewayUrl(params.url));
 }
 
-export async function createOperatorApprovalsGatewayClient(
-  params: Pick<
-    GatewayClientOptions,
-    | "clientDisplayName"
-    | "onClose"
-    | "onConnectError"
-    | "onEvent"
-    | "onHelloOk"
-    | "onReconnectPaused"
-  > & {
-    config: OpenClawConfig;
-    gatewayUrl?: string;
+async function createOperatorScopedGatewayClient(
+  params: OperatorGatewayClientFactoryParams & {
+    scope: "operator.admin" | "operator.approvals";
+    includeApprovalRuntimeToken?: boolean;
   },
 ): Promise<GatewayClient> {
   const bootstrap = await resolveGatewayClientBootstrap({
@@ -49,12 +50,14 @@ export async function createOperatorApprovalsGatewayClient(
     url: bootstrap.url,
     token: bootstrap.auth.token,
     password: bootstrap.auth.password,
-    ...(params.gatewayUrl ? {} : { approvalRuntimeToken: getOperatorApprovalRuntimeToken() }),
+    ...(params.includeApprovalRuntimeToken
+      ? { approvalRuntimeToken: getOperatorApprovalRuntimeToken() }
+      : {}),
     preauthHandshakeTimeoutMs: bootstrap.preauthHandshakeTimeoutMs,
     clientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
     clientDisplayName: params.clientDisplayName,
     mode: GATEWAY_CLIENT_MODES.BACKEND,
-    scopes: ["operator.approvals"],
+    scopes: [params.scope],
     deviceIdentity: shouldOmitOperatorApprovalDeviceIdentity({
       url: bootstrap.url,
       token: bootstrap.auth.token,
@@ -70,13 +73,34 @@ export async function createOperatorApprovalsGatewayClient(
   });
 }
 
-export async function withOperatorApprovalsGatewayClient<T>(
+export async function createOperatorApprovalsGatewayClient(
+  params: OperatorGatewayClientFactoryParams,
+): Promise<GatewayClient> {
+  return await createOperatorScopedGatewayClient({
+    ...params,
+    scope: "operator.approvals",
+    includeApprovalRuntimeToken: !params.gatewayUrl,
+  });
+}
+
+async function createOperatorAdminGatewayClient(
+  params: OperatorGatewayClientFactoryParams,
+): Promise<GatewayClient> {
+  return await createOperatorScopedGatewayClient({
+    ...params,
+    scope: "operator.admin",
+  });
+}
+
+async function withOperatorScopedGatewayClient<T>(
   params: {
     config: OpenClawConfig;
     gatewayUrl?: string;
     clientDisplayName: string;
   },
   run: (client: GatewayClient) => Promise<T>,
+  createClient: (params: OperatorGatewayClientFactoryParams) => Promise<GatewayClient>,
+  readinessLabel: string,
 ): Promise<T> {
   let readySettled = false;
   let resolveReady!: () => void;
@@ -100,7 +124,7 @@ export async function withOperatorApprovalsGatewayClient<T>(
     rejectReady(err);
   };
 
-  const gatewayClient = await createOperatorApprovalsGatewayClient({
+  const gatewayClient = await createClient({
     config: params.config,
     gatewayUrl: params.gatewayUrl,
     clientDisplayName: params.clientDisplayName,
@@ -122,8 +146,8 @@ export async function withOperatorApprovalsGatewayClient<T>(
     if (!readiness.ready) {
       throw new Error(
         readiness.aborted
-          ? "gateway approval client start aborted before readiness"
-          : "gateway readiness unavailable before approval client start",
+          ? `gateway ${readinessLabel} client start aborted before readiness`
+          : `gateway readiness unavailable before ${readinessLabel} client start`,
       );
     }
     await ready;
@@ -133,4 +157,64 @@ export async function withOperatorApprovalsGatewayClient<T>(
       gatewayClient.stop();
     });
   }
+}
+
+export async function withOperatorApprovalsGatewayClient<T>(
+  params: {
+    config: OpenClawConfig;
+    gatewayUrl?: string;
+    clientDisplayName: string;
+  },
+  run: (client: GatewayClient) => Promise<T>,
+): Promise<T> {
+  return await withOperatorScopedGatewayClient(
+    params,
+    run,
+    createOperatorApprovalsGatewayClient,
+    "approval",
+  );
+}
+
+async function withOperatorAdminGatewayClient<T>(
+  params: {
+    config: OpenClawConfig;
+    gatewayUrl?: string;
+    clientDisplayName: string;
+  },
+  run: (client: GatewayClient) => Promise<T>,
+): Promise<T> {
+  return await withOperatorScopedGatewayClient(
+    params,
+    run,
+    createOperatorAdminGatewayClient,
+    "admin",
+  );
+}
+
+export type ResolveVerifiedPluginApprovalOverGatewayParams = {
+  config: OpenClawConfig;
+  gatewayUrl?: string;
+  clientDisplayName?: string;
+  approvalId: string;
+  decision: ExecApprovalDecision;
+  pluginId: string;
+};
+
+export async function resolveVerifiedPluginApprovalOverGateway(
+  params: ResolveVerifiedPluginApprovalOverGatewayParams,
+): Promise<void> {
+  await withOperatorAdminGatewayClient(
+    {
+      config: params.config,
+      gatewayUrl: params.gatewayUrl,
+      clientDisplayName: params.clientDisplayName ?? "Verified plugin approval",
+    },
+    async (client) => {
+      await client.request("plugin.approval.resolveVerified", {
+        id: params.approvalId,
+        decision: params.decision,
+        pluginId: params.pluginId,
+      });
+    },
+  );
 }
