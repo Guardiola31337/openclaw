@@ -3,9 +3,11 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { callGateway } from "../../gateway/call.js";
 import { resolveGatewayCredentialsFromConfig, trimToUndefined } from "../../gateway/credentials.js";
 import {
+  APPROVALS_SCOPE,
   resolveLeastPrivilegeOperatorScopesForMethod,
   type OperatorScope,
 } from "../../gateway/method-scopes.js";
+import { getOperatorApprovalRuntimeToken } from "../../gateway/operator-approval-runtime-token.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../../gateway/protocol/client-info.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
@@ -145,6 +147,18 @@ export function resolveGatewayOptions(opts?: GatewayCallOptions) {
   return { url: validatedOverride?.url, token, timeoutMs };
 }
 
+function shouldUseApprovalRuntimeToken(params: {
+  method: string;
+  opts: GatewayCallOptions;
+  scopes: readonly OperatorScope[];
+}): boolean {
+  return (
+    params.method.startsWith("plugin.approval.") &&
+    params.scopes.includes(APPROVALS_SCOPE) &&
+    trimToUndefined(params.opts.gatewayUrl) === undefined
+  );
+}
+
 export async function callGatewayTool<T = Record<string, unknown>>(
   method: string,
   opts: GatewayCallOptions,
@@ -162,6 +176,9 @@ export async function callGatewayTool<T = Record<string, unknown>>(
     params,
     timeoutMs: gateway.timeoutMs,
     expectFinal: extra?.expectFinal,
+    ...(shouldUseApprovalRuntimeToken({ method, opts, scopes })
+      ? { approvalRuntimeToken: getOperatorApprovalRuntimeToken() }
+      : {}),
     clientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
     clientDisplayName: "agent",
     mode: GATEWAY_CLIENT_MODES.BACKEND,
