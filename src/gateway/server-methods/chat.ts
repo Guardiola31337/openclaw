@@ -18,7 +18,6 @@ import { stageSandboxMedia } from "../../auto-reply/reply/stage-sandbox-media.js
 import type { MsgContext, TemplateContext } from "../../auto-reply/templating.js";
 import { extractCanvasFromText } from "../../chat/canvas-render.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
-import { streamSessionTranscriptLines } from "../../config/sessions/transcript-stream.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   measureDiagnosticsTimelineSpan,
@@ -139,6 +138,7 @@ type TranscriptAppendResult = {
   ok: boolean;
   messageId?: string;
   message?: Record<string, unknown>;
+  deduped?: boolean;
   error?: string;
 };
 
@@ -1367,27 +1367,6 @@ function ensureTranscriptFile(params: { transcriptPath: string; sessionId: strin
   }
 }
 
-async function transcriptHasIdempotencyKey(
-  transcriptPath: string,
-  idempotencyKey: string,
-): Promise<boolean> {
-  try {
-    for await (const line of streamSessionTranscriptLines(transcriptPath)) {
-      try {
-        const parsed = JSON.parse(line) as { message?: { idempotencyKey?: unknown } };
-        if (parsed?.message?.idempotencyKey === idempotencyKey) {
-          return true;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 async function appendAssistantTranscriptMessage(params: {
   message: string;
   label?: string;
@@ -1398,6 +1377,9 @@ async function appendAssistantTranscriptMessage(params: {
   agentId?: string;
   createIfMissing?: boolean;
   idempotencyKey?: string;
+  command?: boolean;
+  interactive?: Record<string, unknown>;
+  channelData?: Record<string, unknown>;
   abortMeta?: {
     aborted: true;
     origin: AbortOrigin;
@@ -1428,19 +1410,15 @@ async function appendAssistantTranscriptMessage(params: {
     }
   }
 
-  if (
-    params.idempotencyKey &&
-    (await transcriptHasIdempotencyKey(transcriptPath, params.idempotencyKey))
-  ) {
-    return { ok: true };
-  }
-
   return await appendInjectedAssistantMessageToTranscript({
     transcriptPath,
     message: params.message,
     label: params.label,
     content: params.content,
     idempotencyKey: params.idempotencyKey,
+    command: params.command,
+    interactive: params.interactive,
+    channelData: params.channelData,
     abortMeta: params.abortMeta,
     config: params.cfg,
   });
@@ -2928,6 +2906,10 @@ export const chatHandlers: GatewayRequestHandlers = {
       sessionKey: string;
       message: string;
       label?: string;
+      idempotencyKey?: string;
+      command?: boolean;
+      interactive?: Record<string, unknown>;
+      channelData?: Record<string, unknown>;
     };
 
     // Load session to find transcript file
@@ -2947,8 +2929,16 @@ export const chatHandlers: GatewayRequestHandlers = {
       sessionFile: entry?.sessionFile,
       agentId: resolveSessionAgentId({ sessionKey, config: cfg }),
       createIfMissing: true,
+      idempotencyKey: p.idempotencyKey,
+      command: p.command,
+      interactive: p.interactive,
+      channelData: p.channelData,
       cfg,
     });
+    if (appended.ok && appended.deduped) {
+      respond(true, { ok: true, deduped: true });
+      return;
+    }
     if (!appended.ok || !appended.messageId || !appended.message) {
       respond(
         false,

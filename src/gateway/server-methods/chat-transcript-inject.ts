@@ -1,5 +1,8 @@
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
-import { appendSessionTranscriptMessage } from "../../config/sessions/transcript-append.js";
+import {
+  appendSessionTranscriptMessage,
+  appendSessionTranscriptMessageOnce,
+} from "../../config/sessions/transcript-append.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
@@ -16,6 +19,7 @@ export type GatewayInjectedTranscriptAppendResult = {
   ok: boolean;
   messageId?: string;
   message?: Record<string, unknown>;
+  deduped?: boolean;
   error?: string;
 };
 
@@ -50,6 +54,9 @@ export async function appendInjectedAssistantMessageToTranscript(params: {
   /** When set, used as the assistant `content` array (e.g. text + embedded audio blocks). */
   content?: Array<Record<string, unknown>>;
   idempotencyKey?: string;
+  command?: boolean;
+  interactive?: Record<string, unknown>;
+  channelData?: Record<string, unknown>;
   abortMeta?: GatewayInjectedAbortMeta;
   now?: number;
   config?: OpenClawConfig;
@@ -91,6 +98,9 @@ export async function appendInjectedAssistantMessageToTranscript(params: {
     provider: "openclaw",
     model: "gateway-injected",
     ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+    ...(params.command !== undefined ? { command: params.command } : {}),
+    ...(params.interactive ? { interactive: params.interactive } : {}),
+    ...(params.channelData ? { channelData: params.channelData } : {}),
     ...(params.abortMeta
       ? {
           openclawAbort: {
@@ -103,13 +113,23 @@ export async function appendInjectedAssistantMessageToTranscript(params: {
   };
 
   try {
-    const { messageId, message: appendedMessage } = await appendSessionTranscriptMessage({
+    const appendParams = {
       transcriptPath: params.transcriptPath,
       message: messageBody,
       now,
       useRawWhenLinear: true,
       config: params.config,
-    });
+    };
+    const appended = params.idempotencyKey
+      ? await appendSessionTranscriptMessageOnce({
+          ...appendParams,
+          messageIdempotencyKey: params.idempotencyKey,
+        })
+      : await appendSessionTranscriptMessage(appendParams);
+    if ("deduped" in appended) {
+      return { ok: true, deduped: true };
+    }
+    const { messageId, message: appendedMessage } = appended;
     emitSessionTranscriptUpdate({
       sessionFile: params.transcriptPath,
       message: appendedMessage,

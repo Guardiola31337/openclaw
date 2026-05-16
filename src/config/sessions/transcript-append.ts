@@ -10,6 +10,7 @@ import {
 import { redactTranscriptMessage } from "../../agents/transcript-redact.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { redactSecrets } from "../../logging/redact.js";
+import { streamSessionTranscriptLines } from "./transcript-stream.js";
 
 const TRANSCRIPT_APPEND_SCAN_CHUNK_BYTES = 64 * 1024;
 const SESSION_MANAGER_APPEND_MAX_BYTES = 8 * 1024 * 1024;
@@ -242,6 +243,22 @@ type AppendSessionTranscriptMessageParams<TMessage = unknown> = {
   config?: OpenClawConfig;
 };
 
+type AppendSessionTranscriptMessageLockedParams<TMessage = unknown> =
+  AppendSessionTranscriptMessageParams<TMessage> & {
+    dedupeMessageIdempotencyKey?: string;
+  };
+
+type AppendSessionTranscriptMessageResult<TMessage = unknown> = {
+  messageId: string;
+  message: TMessage;
+};
+
+type AppendSessionTranscriptMessageOnceResult<TMessage = unknown> =
+  | AppendSessionTranscriptMessageResult<TMessage>
+  | {
+      deduped: true;
+    };
+
 function isTranscriptAgentMessage(value: unknown): value is AgentMessage {
   return (
     typeof value === "object" &&
@@ -251,17 +268,51 @@ function isTranscriptAgentMessage(value: unknown): value is AgentMessage {
   );
 }
 
+async function transcriptHasMessageIdempotencyKey(
+  transcriptPath: string,
+  idempotencyKey: string,
+): Promise<boolean> {
+  for await (const line of streamSessionTranscriptLines(transcriptPath)) {
+    try {
+      const parsed = JSON.parse(line) as { message?: { idempotencyKey?: unknown } };
+      if (parsed?.message?.idempotencyKey === idempotencyKey) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
 export async function appendSessionTranscriptMessage<TMessage>(
   params: AppendSessionTranscriptMessageParams<TMessage>,
-): Promise<{ messageId: string; message: TMessage }> {
-  return await withTranscriptAppendQueue(params.transcriptPath, () =>
+): Promise<AppendSessionTranscriptMessageResult<TMessage>> {
+  const appended = await withTranscriptAppendQueue(params.transcriptPath, () =>
     appendSessionTranscriptMessageLocked(params),
+  );
+  if ("deduped" in appended) {
+    throw new Error("unexpected transcript append dedupe without an idempotency key");
+  }
+  return appended;
+}
+
+export async function appendSessionTranscriptMessageOnce<TMessage>(
+  params: AppendSessionTranscriptMessageParams<TMessage> & {
+    messageIdempotencyKey: string;
+  },
+): Promise<AppendSessionTranscriptMessageOnceResult<TMessage>> {
+  return await withTranscriptAppendQueue(params.transcriptPath, () =>
+    appendSessionTranscriptMessageLocked({
+      ...params,
+      dedupeMessageIdempotencyKey: params.messageIdempotencyKey,
+    }),
   );
 }
 
 async function appendSessionTranscriptMessageLocked<TMessage>(
-  params: AppendSessionTranscriptMessageParams<TMessage>,
-): Promise<{ messageId: string; message: TMessage }> {
+  params: AppendSessionTranscriptMessageLockedParams<TMessage>,
+): Promise<AppendSessionTranscriptMessageOnceResult<TMessage>> {
   const lock = await acquireSessionWriteLock({
     sessionFile: params.transcriptPath,
     timeoutMs: resolveSessionWriteLockAcquireTimeoutMs(params.config),
@@ -274,6 +325,15 @@ async function appendSessionTranscriptMessageLocked<TMessage>(
       ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       ...(params.cwd ? { cwd: params.cwd } : {}),
     });
+    if (
+      params.dedupeMessageIdempotencyKey &&
+      (await transcriptHasMessageIdempotencyKey(
+        params.transcriptPath,
+        params.dedupeMessageIdempotencyKey,
+      ))
+    ) {
+      return { deduped: true };
+    }
     const stat = await fs.stat(params.transcriptPath).catch(() => null);
     let leafInfo: TranscriptLeafInfo = await readTranscriptLeafInfo(params.transcriptPath).catch(
       () => ({
