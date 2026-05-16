@@ -164,6 +164,27 @@ function createApprovalActionRow(view: PendingApprovalView): Row<Button> | undef
   });
 }
 
+function isCommandOnlyApprovalAction(action: ApprovalActionView): boolean {
+  return (
+    (action.kind === "command" || action.decision == null) &&
+    typeof action.command === "string" &&
+    action.command.trim().length > 0
+  );
+}
+
+function buildPluginCommandActionLines(actions: readonly ApprovalActionView[]): string[] {
+  const commandActions = actions.filter(isCommandOnlyApprovalAction);
+  if (commandActions.length === 0) {
+    return [];
+  }
+  return [
+    "### Actions",
+    ...commandActions.map(
+      (action) => `- ${action.label}: \`${formatCommandPreview(action.command.trim(), 240)}\``,
+    ),
+  ];
+}
+
 function buildApprovalMetadataLines(
   metadata: readonly { label: string; value: string }[],
 ): string[] {
@@ -248,7 +269,10 @@ function createPluginApprovalRequestContainer(params: {
     description: "A plugin action needs your approval.",
     commandPreview: formatCommandPreview(params.view.title, 700),
     commandSecondaryPreview: formatOptionalCommandPreview(params.view.description, 1000),
-    metadataLines: buildApprovalMetadataLines(params.view.metadata),
+    metadataLines: [
+      ...buildApprovalMetadataLines(params.view.metadata),
+      ...buildPluginCommandActionLines(params.view.actions),
+    ],
     actionRow: params.actionRow,
     footer: `Expires <t:${expiresAtSeconds}:R> · ID: ${params.view.approvalId}`,
     accentColor,

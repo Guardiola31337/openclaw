@@ -44,7 +44,7 @@ type QQBotPendingEntry = {
 
 type QQBotPendingPayload = {
   text: string;
-  keyboard: InlineKeyboard;
+  keyboard?: InlineKeyboard;
 };
 
 function isExecRequest(request: ApprovalRequest): request is ExecApprovalRequest {
@@ -138,8 +138,12 @@ const qqbotApprovalRuntimeSpec: ChannelApprovalNativeRuntimeSpec<
   presentation: {
     buildPendingPayload: ({ request, view }) => {
       const req = request as ApprovalRequest;
-      const text = isExecRequest(req) ? buildExecApprovalText(req) : buildPluginApprovalText(req);
-      const keyboard = buildApprovalKeyboard(req.id, listDecisionActions(view.actions));
+      const text = isExecRequest(req)
+        ? buildExecApprovalText(req)
+        : buildPluginApprovalText(req, view.actions);
+      const decisionActions = listDecisionActions(view.actions);
+      const keyboard =
+        decisionActions.length > 0 ? buildApprovalKeyboard(req.id, decisionActions) : undefined;
       getBridgeLogger().debug?.(
         `[qqbot:approval-runtime] buildPendingPayload requestId=${req.id} kind=${
           isExecRequest(req) ? "exec" : "plugin"
