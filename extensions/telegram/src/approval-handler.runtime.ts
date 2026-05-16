@@ -66,6 +66,10 @@ function listDecisionActions(view: PendingApprovalView): ExecApprovalReplyDecisi
   return view.actions.flatMap((action) => (action.decision ? [action.decision] : []));
 }
 
+function listNativeButtonActions(view: PendingApprovalView): PendingApprovalView["actions"] {
+  return view.actions.filter((action) => Boolean(action.decision));
+}
+
 function buildPendingPayload(params: {
   request: ApprovalRequest;
   approvalKind: "exec" | "plugin";
@@ -99,7 +103,9 @@ function buildPendingPayload(params: {
   return {
     text: payload.text ?? "",
     buttons: resolveTelegramInlineButtons({
-      interactive: buildApprovalInteractiveReplyFromActionDescriptors(params.view.actions),
+      interactive: buildApprovalInteractiveReplyFromActionDescriptors(
+        listNativeButtonActions(params.view),
+      ),
     }),
   };
 }

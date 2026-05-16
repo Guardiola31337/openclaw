@@ -205,7 +205,7 @@ Hook guard semantics to keep in mind:
 
 - `before_tool_call`: `{ block: true }` is terminal and stops lower-priority handlers.
 - `before_tool_call`: `{ block: false }` is treated as no decision.
-- `before_tool_call`: `{ requireApproval: true }` pauses agent execution and prompts the user for approval via the exec approval overlay, Telegram buttons, Discord interactions, or the `/approve` command on any channel.
+- `before_tool_call`: `{ requireApproval: { ... } }` pauses agent execution and prompts the user for approval via the exec approval overlay, native channel approval clients, or the `/approve` command on any channel.
 - `before_install`: `{ block: true }` is terminal and stops lower-priority handlers.
 - `before_install`: `{ block: false }` is treated as no decision.
 - `message_sending`: `{ cancel: true }` is terminal and stops lower-priority handlers.

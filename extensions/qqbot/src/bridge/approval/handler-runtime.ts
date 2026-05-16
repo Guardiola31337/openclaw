@@ -48,7 +48,7 @@ type QQBotPendingPayload = {
 };
 
 function isExecRequest(request: ApprovalRequest): request is ExecApprovalRequest {
-  return "expiresAtMs" in request;
+  return "command" in request.request;
 }
 
 function listDecisionActions(
