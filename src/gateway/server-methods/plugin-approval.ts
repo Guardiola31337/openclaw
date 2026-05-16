@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { ExecApprovalForwarder } from "../../infra/exec-approval-forwarder.js";
 import type { ExecApprovalDecision } from "../../infra/exec-approvals.js";
-import type { PluginApprovalRequestPayload } from "../../infra/plugin-approvals.js";
+import type {
+  PluginApprovalActionTemplate,
+  PluginApprovalRequestPayload,
+} from "../../infra/plugin-approvals.js";
 import {
   DEFAULT_PLUGIN_APPROVAL_TIMEOUT_MS,
   MAX_PLUGIN_APPROVAL_TIMEOUT_MS,
+  expandPluginApprovalActionTemplates,
   resolvePluginApprovalRequestAllowedDecisions,
 } from "../../infra/plugin-approvals.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
@@ -67,6 +71,7 @@ export function createPluginApprovalHandlers(
         toolName?: string | null;
         toolCallId?: string | null;
         allowedDecisions?: string[] | null;
+        actions?: PluginApprovalActionTemplate[] | null;
         agentId?: string | null;
         sessionKey?: string | null;
         turnSourceChannel?: string | null;
@@ -75,6 +80,7 @@ export function createPluginApprovalHandlers(
         turnSourceThreadId?: string | number | null;
         timeoutMs?: number;
         twoPhase?: boolean;
+        keepPendingWithoutRoute?: boolean;
       };
       const twoPhase = p.twoPhase === true;
       const timeoutMs = Math.min(
@@ -85,6 +91,9 @@ export function createPluginApprovalHandlers(
       const normalizeTrimmedString = (value?: string | null): string | null =>
         normalizeOptionalString(value) || null;
 
+      // Always server-generate the ID — never accept plugin-provided IDs.
+      // Kind-prefix so /approve routing can distinguish plugin vs exec IDs deterministically.
+      const approvalId = `plugin:${randomUUID()}`;
       const request: PluginApprovalRequestPayload = {
         pluginId: p.pluginId ?? null,
         title: p.title,
@@ -99,6 +108,9 @@ export function createPluginApprovalHandlers(
               }),
             }
           : {}),
+        ...(Array.isArray(p.actions)
+          ? { actions: expandPluginApprovalActionTemplates({ approvalId, actions: p.actions }) }
+          : {}),
         agentId: p.agentId ?? null,
         sessionKey: p.sessionKey ?? null,
         turnSourceChannel: normalizeTrimmedString(p.turnSourceChannel),
@@ -107,9 +119,7 @@ export function createPluginApprovalHandlers(
         turnSourceThreadId: p.turnSourceThreadId ?? null,
       };
 
-      // Always server-generate the ID — never accept plugin-provided IDs.
-      // Kind-prefix so /approve routing can distinguish plugin vs exec IDs deterministically.
-      const record = manager.create(request, timeoutMs, `plugin:${randomUUID()}`);
+      const record = manager.create(request, timeoutMs, approvalId);
       record.requestedByConnId = client?.connId ?? null;
       record.requestedByDeviceId = client?.connect?.device?.id ?? null;
       record.requestedByClientId = client?.connect?.client?.id ?? null;
@@ -144,6 +154,7 @@ export function createPluginApprovalHandlers(
         requestEventName: "plugin.approval.requested",
         requestEvent,
         twoPhase,
+        keepPendingWithoutRoute: p.keepPendingWithoutRoute === true,
         deliverRequest: () => {
           if (!opts?.forwarder?.handlePluginApprovalRequested) {
             return false;

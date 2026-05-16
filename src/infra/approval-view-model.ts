@@ -1,5 +1,6 @@
 import type {
   ApprovalMetadataView,
+  ApprovalActionView,
   ApprovalRequest,
   ApprovalResolved,
   ExecApprovalViewBase,
@@ -101,15 +102,28 @@ function buildPluginViewBase<TPhase extends ApprovalPhase>(
   };
 }
 
+function buildPluginApprovalActions(request: PluginApprovalRequest): ApprovalActionView[] {
+  if (Array.isArray(request.request.actions) && request.request.actions.length > 0) {
+    return request.request.actions.map((action) => ({
+      kind: action.kind,
+      ...(action.decision ? { decision: action.decision } : {}),
+      label: action.label,
+      style: action.style,
+      command: action.command,
+    }));
+  }
+  return buildExecApprovalActionDescriptors({
+    approvalCommandId: request.id,
+    allowedDecisions: resolvePluginApprovalRequestAllowedDecisions(request.request),
+  });
+}
+
 export function buildPendingApprovalView(request: ApprovalRequest): PendingApprovalView {
   if (request.id.startsWith("plugin:")) {
     const pluginRequest = request as PluginApprovalRequest;
     return {
       ...buildPluginViewBase(pluginRequest, "pending"),
-      actions: buildExecApprovalActionDescriptors({
-        approvalCommandId: pluginRequest.id,
-        allowedDecisions: resolvePluginApprovalRequestAllowedDecisions(pluginRequest.request),
-      }),
+      actions: buildPluginApprovalActions(pluginRequest),
       expiresAtMs: pluginRequest.expiresAtMs,
     };
   }

@@ -5710,6 +5710,7 @@ public struct PluginApprovalRequestParams: Codable, Sendable {
     public let toolname: String?
     public let toolcallid: String?
     public let alloweddecisions: [String]?
+    public let actions: [[String: AnyCodable]]?
     public let agentid: String?
     public let sessionkey: String?
     public let turnsourcechannel: String?
@@ -5718,6 +5719,7 @@ public struct PluginApprovalRequestParams: Codable, Sendable {
     public let turnsourcethreadid: AnyCodable?
     public let timeoutms: Int?
     public let twophase: Bool?
+    public let keeppendingwithoutroute: Bool?
 
     public init(
         pluginid: String?,
@@ -5727,6 +5729,7 @@ public struct PluginApprovalRequestParams: Codable, Sendable {
         toolname: String?,
         toolcallid: String?,
         alloweddecisions: [String]?,
+        actions: [[String: AnyCodable]]?,
         agentid: String?,
         sessionkey: String?,
         turnsourcechannel: String?,
@@ -5734,7 +5737,8 @@ public struct PluginApprovalRequestParams: Codable, Sendable {
         turnsourceaccountid: String?,
         turnsourcethreadid: AnyCodable?,
         timeoutms: Int?,
-        twophase: Bool?)
+        twophase: Bool?,
+        keeppendingwithoutroute: Bool?)
     {
         self.pluginid = pluginid
         self.title = title
@@ -5743,6 +5747,7 @@ public struct PluginApprovalRequestParams: Codable, Sendable {
         self.toolname = toolname
         self.toolcallid = toolcallid
         self.alloweddecisions = alloweddecisions
+        self.actions = actions
         self.agentid = agentid
         self.sessionkey = sessionkey
         self.turnsourcechannel = turnsourcechannel
@@ -5751,6 +5756,7 @@ public struct PluginApprovalRequestParams: Codable, Sendable {
         self.turnsourcethreadid = turnsourcethreadid
         self.timeoutms = timeoutms
         self.twophase = twophase
+        self.keeppendingwithoutroute = keeppendingwithoutroute
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -5761,6 +5767,7 @@ public struct PluginApprovalRequestParams: Codable, Sendable {
         case toolname = "toolName"
         case toolcallid = "toolCallId"
         case alloweddecisions = "allowedDecisions"
+        case actions
         case agentid = "agentId"
         case sessionkey = "sessionKey"
         case turnsourcechannel = "turnSourceChannel"
@@ -5769,6 +5776,7 @@ public struct PluginApprovalRequestParams: Codable, Sendable {
         case turnsourcethreadid = "turnSourceThreadId"
         case timeoutms = "timeoutMs"
         case twophase = "twoPhase"
+        case keeppendingwithoutroute = "keepPendingWithoutRoute"
     }
 }
 

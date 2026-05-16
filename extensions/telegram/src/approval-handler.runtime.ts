@@ -9,7 +9,10 @@ import {
   buildApprovalInteractiveReplyFromActionDescriptors,
   buildExecApprovalPendingReplyPayload,
 } from "openclaw/plugin-sdk/approval-reply-runtime";
-import type { ExecApprovalPendingReplyParams } from "openclaw/plugin-sdk/approval-reply-runtime";
+import type {
+  ExecApprovalPendingReplyParams,
+  ExecApprovalReplyDecision,
+} from "openclaw/plugin-sdk/approval-reply-runtime";
 import type {
   ExecApprovalRequest,
   PluginApprovalRequest,
@@ -59,6 +62,10 @@ function resolveHandlerContext(params: ChannelApprovalCapabilityHandlerContext):
   return { accountId, context };
 }
 
+function listDecisionActions(view: PendingApprovalView): ExecApprovalReplyDecision[] {
+  return view.actions.flatMap((action) => (action.decision ? [action.decision] : []));
+}
+
 function buildPendingPayload(params: {
   request: ApprovalRequest;
   approvalKind: "exec" | "plugin";
@@ -85,7 +92,7 @@ function buildPendingPayload(params: {
             params.view.approvalKind === "exec" && params.view.host === "node" ? "node" : "gateway",
           nodeId:
             params.view.approvalKind === "exec" ? (params.view.nodeId ?? undefined) : undefined,
-          allowedDecisions: params.view.actions.map((action) => action.decision),
+          allowedDecisions: listDecisionActions(params.view),
           expiresAtMs: params.request.expiresAtMs,
           nowMs: params.nowMs,
         } satisfies ExecApprovalPendingReplyParams);

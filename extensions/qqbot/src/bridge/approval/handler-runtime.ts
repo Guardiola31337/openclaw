@@ -34,6 +34,7 @@ import { resolveQQBotAccount } from "../config.js";
 import { getBridgeLogger } from "../logger.js";
 
 type ApprovalRequest = ExecApprovalRequest | PluginApprovalRequest;
+type ApprovalDecision = NonNullable<Parameters<typeof buildApprovalKeyboard>[1]>[number];
 
 type QQBotPendingEntry = {
   messageId?: string;
@@ -48,6 +49,12 @@ type QQBotPendingPayload = {
 
 function isExecRequest(request: ApprovalRequest): request is ExecApprovalRequest {
   return "expiresAtMs" in request;
+}
+
+function listDecisionActions(
+  actions: readonly { decision?: ApprovalDecision }[],
+): ApprovalDecision[] {
+  return actions.flatMap((action) => (action.decision ? [action.decision] : []));
 }
 
 function resolveQQTarget(request: ApprovalRequest): { type: ChatScope; id: string } | null {
@@ -132,10 +139,7 @@ const qqbotApprovalRuntimeSpec: ChannelApprovalNativeRuntimeSpec<
     buildPendingPayload: ({ request, view }) => {
       const req = request as ApprovalRequest;
       const text = isExecRequest(req) ? buildExecApprovalText(req) : buildPluginApprovalText(req);
-      const keyboard = buildApprovalKeyboard(
-        req.id,
-        view.actions.map((action) => action.decision),
-      );
+      const keyboard = buildApprovalKeyboard(req.id, listDecisionActions(view.actions));
       getBridgeLogger().debug?.(
         `[qqbot:approval-runtime] buildPendingPayload requestId=${req.id} kind=${
           isExecRequest(req) ? "exec" : "plugin"

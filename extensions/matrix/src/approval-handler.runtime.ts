@@ -56,7 +56,7 @@ type PreparedMatrixTarget = {
   threadId?: string;
 };
 type MatrixApprovalMetadataAction = {
-  decision: ExecApprovalReplyDecision;
+  decision?: ExecApprovalReplyDecision;
   label: string;
   style: PendingApprovalView["actions"][number]["style"];
   command: string;
@@ -257,7 +257,7 @@ function buildMatrixApprovalMetadata(params: {
     metadata: params.view.metadata,
     allowedDecisions: Array.from(params.allowedDecisions),
     actions: params.view.actions.map((action) => ({
-      decision: action.decision,
+      ...(action.decision ? { decision: action.decision } : {}),
       label: action.label,
       style: action.style,
       command: action.command,
@@ -291,11 +291,15 @@ function buildMatrixApprovalMetadata(params: {
   };
 }
 
+function listDecisionActions(view: PendingApprovalView): ExecApprovalReplyDecision[] {
+  return view.actions.flatMap((action) => (action.decision ? [action.decision] : []));
+}
+
 function buildPendingApprovalContent(params: {
   view: PendingApprovalView;
   nowMs: number;
 }): PendingApprovalContent {
-  const allowedDecisions = params.view.actions.map((action) => action.decision);
+  const allowedDecisions = listDecisionActions(params.view);
   const payload =
     params.view.approvalKind === "plugin"
       ? buildPluginApprovalPendingReplyPayload({
