@@ -10,6 +10,7 @@ import type { FinalizedMsgContext } from "../auto-reply/templating.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { TtsAutoMode } from "../config/types.tts.js";
 import type { DiagnosticTraceContext } from "../infra/diagnostic-trace-context.js";
+import type { PluginApprovalExternalResolutionTemplate } from "../infra/plugin-approvals.js";
 import type {
   PluginHookBeforeAgentStartEvent,
   PluginHookBeforeAgentStartResult,
@@ -559,6 +560,7 @@ export type PluginHookBeforeToolCallResult = {
     timeoutMs?: number;
     timeoutBehavior?: "allow" | "deny";
     allowedDecisions?: Array<"allow-once" | "allow-always" | "deny">;
+    externalResolution?: PluginApprovalExternalResolutionTemplate | null;
     pluginId?: string;
     onResolution?: (decision: PluginApprovalResolution) => Promise<void> | void;
   };

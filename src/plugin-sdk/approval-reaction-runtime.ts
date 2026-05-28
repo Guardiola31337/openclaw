@@ -205,9 +205,10 @@ function buildDecisionText(allowedDecisions: readonly ExecApprovalReplyDecision[
 function buildManualInstructionSection(params: {
   approvalId: string;
   allowedDecisions: readonly ExecApprovalReplyDecision[];
+  externalAllowAlways?: boolean;
 }): string[] {
   const lines: string[] = [];
-  if (!params.allowedDecisions.includes("allow-always")) {
+  if (!params.allowedDecisions.includes("allow-always") && !params.externalAllowAlways) {
     lines.push(
       "Allow Always is unavailable because the effective policy requires approval every time.",
     );
@@ -293,6 +294,14 @@ function buildApprovalReactionPromptText(params: {
     details.push(`Expires in: ${formatExecApprovalExpiresIn(view.expiresAtMs, params.nowMs)}`);
     details.push(`Full id: \`${view.approvalId}\``);
     sections.push(details.join("\n"));
+    if (view.externalResolution) {
+      const externalLines = [`External verification: ${view.externalResolution.label}`];
+      for (const command of view.externalResolution.commands) {
+        externalLines.push(`${command.label}: ${command.description}`);
+        externalLines.push(command.command);
+      }
+      sections.push(externalLines.join("\n"));
+    }
   }
   if (params.reactionHint) {
     sections.push(params.reactionHint);
@@ -301,9 +310,15 @@ function buildApprovalReactionPromptText(params: {
   if (commandInstructions.length > 0) {
     sections.push(commandInstructions.join("\n"));
   }
+  const externalAllowAlways =
+    view.approvalKind === "plugin"
+      ? (view.externalResolution?.commands.some((command) => command.decision === "allow-always") ??
+        false)
+      : false;
   const manualInstructions = buildManualInstructionSection({
     approvalId: view.approvalId,
     allowedDecisions,
+    externalAllowAlways,
   });
   if (manualInstructions.length > 0) {
     sections.push(manualInstructions.join("\n"));

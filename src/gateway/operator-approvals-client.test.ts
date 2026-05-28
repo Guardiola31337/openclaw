@@ -66,7 +66,8 @@ vi.mock("./client.js", () => ({
   GatewayClient: MockGatewayClient,
 }));
 
-const { withOperatorApprovalsGatewayClient } = await import("./operator-approvals-client.js");
+const { resolveVerifiedPluginApprovalOverGateway, withOperatorApprovalsGatewayClient } =
+  await import("./operator-approvals-client.js");
 
 const DEFAULT_APPROVAL_CLIENT_DISPLAY_NAME = "Matrix approval (@owner:example.org)";
 
@@ -193,5 +194,22 @@ describe("withOperatorApprovalsGatewayClient", () => {
 
     expect(clientState.stopAndWaitSpy).toHaveBeenCalledTimes(1);
     expect(clientState.stopSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves verified plugin approvals with an admin-scoped client", async () => {
+    await resolveVerifiedPluginApprovalOverGateway({
+      config: {} as never,
+      approvalId: "plugin:agentkit-1",
+      decision: "allow-once",
+      pluginId: "agentkit",
+    });
+
+    expect(clientState.options?.scopes).toEqual(["operator.admin"]);
+    expect(clientState.options).not.toHaveProperty("approvalRuntimeToken");
+    expect(clientState.requestSpy).toHaveBeenCalledWith("plugin.approval.resolveVerified", {
+      id: "plugin:agentkit-1",
+      decision: "allow-once",
+      pluginId: "agentkit",
+    });
   });
 });

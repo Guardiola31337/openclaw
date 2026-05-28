@@ -455,6 +455,7 @@ async function requestPluginToolApproval(params: {
         description: approval.description,
         severity: approval.severity,
         allowedDecisions: approval.allowedDecisions,
+        ...(approval.externalResolution ? { externalResolution: approval.externalResolution } : {}),
         toolName: params.toolName,
         toolCallId: params.toolCallId,
         agentId: params.ctx?.agentId,

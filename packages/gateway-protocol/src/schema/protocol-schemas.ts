@@ -234,6 +234,7 @@ import {
 import {
   PluginApprovalRequestParamsSchema,
   PluginApprovalResolveParamsSchema,
+  PluginApprovalResolveVerifiedParamsSchema,
 } from "./plugin-approvals.js";
 import {
   PluginControlUiDescriptorSchema,
@@ -548,6 +549,7 @@ export const ProtocolSchemas = {
   ExecApprovalResolveParams: ExecApprovalResolveParamsSchema,
   PluginApprovalRequestParams: PluginApprovalRequestParamsSchema,
   PluginApprovalResolveParams: PluginApprovalResolveParamsSchema,
+  PluginApprovalResolveVerifiedParams: PluginApprovalResolveVerifiedParamsSchema,
   PluginControlUiDescriptor: PluginControlUiDescriptorSchema,
   PluginsSessionActionFailureResult: PluginsSessionActionFailureResultSchema,
   PluginsSessionActionParams: PluginsSessionActionParamsSchema,
