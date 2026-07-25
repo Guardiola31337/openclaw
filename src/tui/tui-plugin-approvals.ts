@@ -9,7 +9,13 @@ import {
 import { isApprovalStaleError } from "../infra/approval-errors.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { selectListTheme, theme } from "./theme/theme.js";
-import type { TuiApprovalDecision, TuiBackend, TuiPluginApproval } from "./tui-backend.js";
+import type {
+  TuiApprovalDecision,
+  TuiBackend,
+  TuiExternalApprovalDecision,
+  TuiPluginApproval,
+  TuiPreparedExternalApprovalAction,
+} from "./tui-backend.js";
 import { sanitizeRenderableText } from "./tui-formatters.js";
 
 type ApprovalSelector = Component & {
@@ -20,22 +26,64 @@ type ApprovalSelector = Component & {
 };
 
 const APPROVAL_BIDI_CONTROL_RE = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const FENCED_PRESENTATION_RE = /(?:^|\n)(```|~~~)[^\n]*\n([\s\S]*?)\n\1(?=\n|$)/g;
+const MAX_COMPACT_PRESENTATION_CHARS = 480;
+const TERMINAL_BLACK_ON_WHITE = "\x1b[47m\x1b[30m";
+const TERMINAL_RESET = "\x1b[0m";
 
 function sanitizeApprovalText(text: string): string {
   const flattened = text.replace(APPROVAL_BIDI_CONTROL_RE, "").replace(/\s+/g, " ").trim();
   return sanitizeRenderableText(flattened);
 }
 
+function extractLatestFencedPresentation(presentations: readonly string[]): string | null {
+  let latest: string | null = null;
+  for (const presentation of presentations) {
+    const sanitized = sanitizeRenderableText(presentation);
+    FENCED_PRESENTATION_RE.lastIndex = 0;
+    for (
+      let match = FENCED_PRESENTATION_RE.exec(sanitized);
+      match;
+      match = FENCED_PRESENTATION_RE.exec(sanitized)
+    ) {
+      latest = match[2] ?? null;
+    }
+  }
+  return latest;
+}
+
+function formatCompactPresentation(presentations: readonly string[]): string {
+  const fenced = extractLatestFencedPresentation(presentations);
+  if (fenced !== null) {
+    return fenced
+      .split("\n")
+      .map((line) => `${TERMINAL_BLACK_ON_WHITE}${line}${TERMINAL_RESET}`)
+      .join("\n");
+  }
+  const latest = presentations.at(-1);
+  if (!latest) {
+    return "";
+  }
+  const compact = sanitizeApprovalText(latest);
+  const characters = Array.from(compact);
+  return characters.length <= MAX_COMPACT_PRESENTATION_CHARS
+    ? compact
+    : `${characters.slice(0, MAX_COMPACT_PRESENTATION_CHARS - 1).join("")}…`;
+}
+
 class PluginApprovalPrompt implements Component {
   private readonly title: Text;
   private readonly metadata: Text;
   private readonly description: Text;
+  private readonly externalResolution: Text;
+  private readonly challenge: Text;
   private readonly confirmation = new Text();
 
   constructor(
     surfaceLabel: string,
     approval: TuiPluginApproval,
     private readonly selector: ApprovalSelector,
+    presentations: readonly string[] = [],
   ) {
     const title = sanitizeApprovalText(approval.request.title);
     const description = sanitizeApprovalText(approval.request.description ?? "");
@@ -49,9 +97,18 @@ class PluginApprovalPrompt implements Component {
         ? [`Plugin: ${sanitizeApprovalText(approval.request.pluginId)}`]
         : []),
     ];
+    const externalResolution = approval.request.externalResolution;
+    const externalLines = externalResolution
+      ? [
+          sanitizeApprovalText(externalResolution.label),
+          "Press Escape to dismiss; the request remains pending.",
+        ]
+      : [];
     this.title = new Text(theme.header(`${surfaceLabel}: ${title}`));
     this.metadata = new Text(theme.dim(metadata.join("\n")));
     this.description = new Text(theme.system(description ? `Request: ${description}` : ""));
+    this.externalResolution = new Text(theme.system(externalLines.join("\n")));
+    this.challenge = new Text(formatCompactPresentation(presentations));
   }
 
   setConfirmation(text: string): void {
@@ -62,20 +119,43 @@ class PluginApprovalPrompt implements Component {
     this.title.invalidate();
     this.metadata.invalidate();
     this.description.invalidate();
+    this.externalResolution.invalidate();
+    this.challenge.invalidate();
     this.confirmation.invalidate();
     this.selector.invalidate();
   }
 
   render(width: number): string[] {
-    const description = this.description.render(width);
+    const challenge = this.challenge.render(width);
     const confirmation = this.confirmation.render(width);
+    const selector = this.selector.render(width);
+    if (challenge.some((line) => line.trim())) {
+      // Keep actions above a potentially tall QR so a short terminal never
+      // hides the fail-closed controls. The complete presentation stays in chat.
+      return [
+        ...selector,
+        ...(confirmation.some((line) => line.trim()) ? confirmation : []),
+        ...challenge,
+      ];
+    }
+    const description = this.description.render(width);
+    const externalResolution = this.externalResolution.render(width);
+    if (externalResolution.some((line) => line.trim())) {
+      return [
+        ...this.title.render(width),
+        ...externalResolution,
+        ...(confirmation.some((line) => line.trim()) ? ["", ...confirmation] : []),
+        "",
+        ...selector,
+      ];
+    }
     return [
       ...this.title.render(width),
       ...this.metadata.render(width),
       ...(description.some((line) => line.trim()) ? description : []),
       ...(confirmation.some((line) => line.trim()) ? ["", ...confirmation] : []),
       "",
-      ...this.selector.render(width),
+      ...selector,
     ];
   }
 
@@ -91,7 +171,13 @@ type ApprovalMutation = {
 };
 
 type TuiPluginApprovalControllerDeps = {
-  client: Pick<TuiBackend, "listPluginApprovals" | "resolvePluginApproval">;
+  client: Pick<
+    TuiBackend,
+    | "listPluginApprovals"
+    | "prepareExternalPluginApproval"
+    | "resolvePluginApproval"
+    | "startExternalPluginApproval"
+  >;
   chatLog: {
     addSystem: (line: string) => void;
   };
@@ -107,6 +193,7 @@ type TuiPluginApprovalControllerDeps = {
 };
 
 const DEFAULT_DECISIONS: readonly TuiApprovalDecision[] = ["allow-once", "allow-always", "deny"];
+const EXTERNAL_SELECTION_PREFIX = "external:";
 
 const DECISION_ITEMS: Record<TuiApprovalDecision, SelectItem> = {
   "allow-once": {
@@ -126,12 +213,33 @@ const DECISION_ITEMS: Record<TuiApprovalDecision, SelectItem> = {
   },
 };
 
+const EXTERNAL_DECISION_ITEMS: Record<TuiExternalApprovalDecision, SelectItem> = {
+  "allow-once": {
+    value: `${EXTERNAL_SELECTION_PREFIX}allow-once`,
+    label: "Verify once",
+    description: "Verify this blocked action",
+  },
+  "allow-always": {
+    value: `${EXTERNAL_SELECTION_PREFIX}allow-always`,
+    label: "Verify and trust for session",
+    description: "Verify and trust matching actions in this session",
+  },
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function parseDecision(value: unknown): TuiApprovalDecision | null {
   return value === "allow-once" || value === "allow-always" || value === "deny" ? value : null;
+}
+
+function parseExternalDecision(value: unknown): TuiExternalApprovalDecision | null {
+  if (typeof value !== "string" || !value.startsWith(EXTERNAL_SELECTION_PREFIX)) {
+    return null;
+  }
+  const decision = value.slice(EXTERNAL_SELECTION_PREFIX.length);
+  return decision === "allow-once" || decision === "allow-always" ? decision : null;
 }
 
 function parseAllowedDecisions(value: unknown): TuiApprovalDecision[] | undefined {
@@ -146,6 +254,28 @@ function parseAllowedDecisions(value: unknown): TuiApprovalDecision[] | undefine
     }
   }
   return decisions.length > 0 ? decisions : undefined;
+}
+
+function parseExternalResolution(
+  value: unknown,
+): TuiPluginApproval["request"]["externalResolution"] {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const label = typeof value.label === "string" ? value.label.trim() : "";
+  if (!label || !Array.isArray(value.decisions)) {
+    return null;
+  }
+  const decisions: TuiExternalApprovalDecision[] = [];
+  for (const candidate of value.decisions) {
+    if (
+      (candidate === "allow-once" || candidate === "allow-always") &&
+      !decisions.includes(candidate)
+    ) {
+      decisions.push(candidate);
+    }
+  }
+  return decisions.length > 0 ? { label, decisions } : null;
 }
 
 function parseSeverity(value: unknown): TuiPluginApproval["request"]["severity"] {
@@ -174,6 +304,7 @@ function parseTuiPluginApproval(payload: unknown): TuiPluginApproval | null {
       severity: parseSeverity(payload.request.severity),
       toolName: typeof payload.request.toolName === "string" ? payload.request.toolName : null,
       allowedDecisions: parseAllowedDecisions(payload.request.allowedDecisions),
+      externalResolution: parseExternalResolution(payload.request.externalResolution),
       agentId: typeof payload.request.agentId === "string" ? payload.request.agentId : null,
       sessionKey:
         typeof payload.request.sessionKey === "string" ? payload.request.sessionKey : null,
@@ -225,6 +356,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
   const mutations = new Map<string, ApprovalMutation>();
   const resolvingIds = new Set<string>();
   const dismissedIds = new Set<string>();
+  const externalPresentations = new Map<string, string[]>();
 
   const clearExpiryTimer = () => {
     if (expiryTimer !== null) {
@@ -252,6 +384,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
   const remove = (id: string, record = true) => {
     queue = queue.filter((approval) => approval.id !== id);
     dismissedIds.delete(id);
+    externalPresentations.delete(id);
     if (record) {
       recordMutation(id, null);
     }
@@ -303,20 +436,47 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
     const surfaceLabel = approvalSurfaceLabel(approval);
 
     const decisions = approval.request.allowedDecisions ?? DEFAULT_DECISIONS;
-    const selector = createSelector(decisions.map((decision) => DECISION_ITEMS[decision]));
+    const externalDecisions = approval.request.externalResolution?.decisions ?? [];
+    const canDispatchExternal = Boolean(
+      deps.client.prepareExternalPluginApproval && deps.client.startExternalPluginApproval,
+    );
+    const preparedActions = new Map<
+      TuiExternalApprovalDecision,
+      Promise<
+        { ok: true; action: TuiPreparedExternalApprovalAction } | { ok: false; error: unknown }
+      >
+    >();
+    if (canDispatchExternal) {
+      for (const decision of externalDecisions) {
+        preparedActions.set(
+          decision,
+          deps.client.prepareExternalPluginApproval!(approval.id, decision).then(
+            (action) => ({ ok: true as const, action }),
+            (error: unknown) => ({ ok: false as const, error }),
+          ),
+        );
+      }
+    }
+    const items = [
+      ...(canDispatchExternal
+        ? externalDecisions.map((decision) => EXTERNAL_DECISION_ITEMS[decision])
+        : []),
+      ...decisions.map((decision) => DECISION_ITEMS[decision]),
+    ];
+    const selector = createSelector(items);
     let allowDecisionArmed = false;
     let prompt: PluginApprovalPrompt | null = null;
-    const denyIndex = decisions.indexOf("deny");
-    let selectedDecision = denyIndex >= 0 ? decisions[denyIndex] : decisions[0];
+    const denyIndex = items.findIndex((item) => item.value === "deny");
+    let selectedValue = items[denyIndex >= 0 ? denyIndex : 0]?.value;
     if (denyIndex >= 0) {
       selector.setSelectedIndex?.(denyIndex);
     }
     selector.onSelectionChange = (item) => {
-      const decision = parseDecision(item.value);
-      if (!decision || decision === selectedDecision) {
+      const decision = parseDecision(item.value) ?? parseExternalDecision(item.value);
+      if (!decision || item.value === selectedValue) {
         return;
       }
-      selectedDecision = decision;
+      selectedValue = item.value;
       allowDecisionArmed = decision !== "deny";
       prompt?.setConfirmation("");
     };
@@ -365,8 +525,50 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       }
     };
 
+    const dispatchExternal = async (decision: TuiExternalApprovalDecision) => {
+      if (activeId !== approval.id) {
+        return;
+      }
+      clearExpiryTimer();
+      activeId = null;
+      resolvingIds.add(approval.id);
+      closeActiveOverlay();
+      deps.requestRender();
+      try {
+        const prepared = await preparedActions.get(decision);
+        if (!prepared) {
+          throw new Error("external approval action preparation is unavailable");
+        }
+        if (!prepared.ok) {
+          throw prepared.error;
+        }
+        if (!deps.client.startExternalPluginApproval) {
+          throw new Error("external approval action dispatch is unavailable");
+        }
+        const result = await deps.client.startExternalPluginApproval(
+          approval.id,
+          decision,
+          prepared.action.actionToken,
+        );
+        if (result.presentations.length > 0) {
+          externalPresentations.set(approval.id, result.presentations);
+        }
+        for (const presentation of result.presentations) {
+          deps.chatLog.addSystem(presentation);
+        }
+      } catch (error) {
+        deps.chatLog.addSystem(`${surfaceLabel} failed: ${formatErrorMessage(error)}`);
+      }
+      resolvingIds.delete(approval.id);
+      presentNext();
+      if (!disposed) {
+        deps.requestRender();
+      }
+    };
+
     selector.onSelect = (item) => {
-      const decision = parseDecision(item.value);
+      const externalDecision = parseExternalDecision(item.value);
+      const decision = parseDecision(item.value) ?? externalDecision;
       if (!decision) {
         return;
       }
@@ -376,14 +578,13 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
         deps.requestRender();
         return;
       }
-      void resolve(decision);
-    };
-    selector.onCancel = () => {
-      const deny = decisions.includes("deny") ? "deny" : null;
-      if (deny) {
-        void resolve(deny);
+      if (externalDecision) {
+        void dispatchExternal(externalDecision);
         return;
       }
+      void resolve(decision);
+    };
+    const dismiss = () => {
       clearExpiryTimer();
       dismissedIds.add(approval.id);
       activeId = null;
@@ -391,6 +592,18 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       deps.chatLog.addSystem(`${surfaceLabel}: dismissed; request remains pending`);
       presentNext();
       deps.requestRender();
+    };
+    selector.onCancel = () => {
+      if (approval.request.externalResolution) {
+        dismiss();
+        return;
+      }
+      const deny = decisions.includes("deny") ? "deny" : null;
+      if (deny) {
+        void resolve(deny);
+        return;
+      }
+      dismiss();
     };
     const timer = setTimeoutFn(
       () => {
@@ -411,7 +624,12 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
     if (typeof timer !== "number") {
       timer.unref?.();
     }
-    prompt = new PluginApprovalPrompt(surfaceLabel, approval, selector);
+    prompt = new PluginApprovalPrompt(
+      surfaceLabel,
+      approval,
+      selector,
+      externalPresentations.get(approval.id),
+    );
     activeOverlay = deps.openOverlay(prompt);
     deps.requestRender();
   };
@@ -538,6 +756,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       clearExpiryTimer();
       queue = [];
       dismissedIds.clear();
+      externalPresentations.clear();
       mutations.clear();
       resolvingIds.clear();
       if (activeId) {

@@ -409,6 +409,10 @@ import {
   SystemAgentSetupVerifyResultSchema,
 } from "./openclaw.js";
 import {
+  PluginApprovalExternalPrepareParamsSchema,
+  PluginApprovalExternalPrepareResultSchema,
+  PluginApprovalExternalStartParamsSchema,
+  PluginApprovalExternalStartResultSchema,
   PluginApprovalRequestParamsSchema,
   PluginApprovalResolveParamsSchema,
 } from "./plugin-approvals.js";
@@ -1236,6 +1240,10 @@ export const ProtocolSchemas = {
   // QuestionRequestedEvent is a TS-only alias of QuestionRecord; registering both
   // names makes native codegen reference a type it never emits.
   QuestionResolvedEvent: QuestionResolvedEventSchema,
+  PluginApprovalExternalPrepareParams: PluginApprovalExternalPrepareParamsSchema,
+  PluginApprovalExternalPrepareResult: PluginApprovalExternalPrepareResultSchema,
+  PluginApprovalExternalStartParams: PluginApprovalExternalStartParamsSchema,
+  PluginApprovalExternalStartResult: PluginApprovalExternalStartResultSchema,
   PluginApprovalRequestParams: PluginApprovalRequestParamsSchema,
   PluginApprovalResolveParams: PluginApprovalResolveParamsSchema,
   PluginCatalogClawHubInstall: PluginCatalogClawHubInstallSchema,

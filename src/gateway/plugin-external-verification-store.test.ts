@@ -14,7 +14,9 @@ import {
 } from "./operator-approval-store.js";
 import {
   completeExternalVerificationAttempt,
+  failExternalVerificationAttempt,
   getExternalVerificationAttemptSnapshot,
+  getExternalVerificationNativeActionState,
   startExternalVerificationAttempt,
 } from "./plugin-external-verification-store.js";
 
@@ -268,6 +270,102 @@ describe("plugin external verification store", () => {
       outcome: "replay",
       applied: false,
       attempt: { outcome: "cancelled", terminalSource: "reviewer-retry" },
+    });
+  });
+
+  it("requires a core-issued native retry generation to replace the exact active attempt", () => {
+    const databaseOptions = createDatabaseOptions();
+    insertExternalApproval({ databaseOptions });
+    const common = {
+      approvalId: "plugin:approval-1",
+      decision: "allow-once" as const,
+      runtimeEpoch: "epoch-1",
+      databaseOptions,
+    };
+    expect(getExternalVerificationNativeActionState({ ...common, nowMs: 2_000 })).toEqual({
+      outcome: "ready",
+      action: { intent: "start", expectedAttemptId: null },
+    });
+
+    const first = startExternalVerificationAttempt({
+      ...common,
+      interactionId: "a".repeat(64),
+      nativeAction: { intent: "start", expectedAttemptId: null },
+      nowMs: 2_001,
+    });
+    expect(first.outcome).toBe("started");
+    if (first.outcome !== "started") {
+      throw new Error("expected native start attempt");
+    }
+    expect(
+      startExternalVerificationAttempt({
+        ...common,
+        interactionId: "a".repeat(64),
+        nativeAction: { intent: "start", expectedAttemptId: null },
+        nowMs: 2_002,
+      }),
+    ).toEqual({ outcome: "replay", attempt: first.attempt });
+    expect(
+      startExternalVerificationAttempt({
+        ...common,
+        interactionId: "b".repeat(64),
+        nativeAction: { intent: "start", expectedAttemptId: null },
+        nowMs: 2_003,
+      }),
+    ).toEqual({ outcome: "stale-action", attempt: first.attempt });
+
+    const retryAction = {
+      intent: "retry" as const,
+      expectedAttemptId: first.attempt.id,
+    };
+    expect(getExternalVerificationNativeActionState({ ...common, nowMs: 2_004 })).toEqual({
+      outcome: "ready",
+      action: retryAction,
+    });
+    const retry = startExternalVerificationAttempt({
+      ...common,
+      interactionId: "c".repeat(64),
+      nativeAction: retryAction,
+      nowMs: 2_005,
+    });
+    expect(retry.outcome).toBe("started");
+    if (retry.outcome !== "started") {
+      throw new Error("expected native retry attempt");
+    }
+    expect(
+      startExternalVerificationAttempt({
+        ...common,
+        interactionId: "a".repeat(64),
+        nativeAction: { intent: "start", expectedAttemptId: null },
+        nowMs: 2_006,
+      }),
+    ).toEqual({ outcome: "stale-action", attempt: retry.attempt });
+    expect(
+      startExternalVerificationAttempt({
+        ...common,
+        interactionId: "d".repeat(64),
+        nativeAction: retryAction,
+        nowMs: 2_007,
+      }),
+    ).toEqual({ outcome: "stale-action", attempt: retry.attempt });
+    expect(
+      getExternalVerificationAttemptSnapshot({
+        attemptId: first.attempt.id,
+        pluginId: "agentkit",
+        databaseOptions,
+      }),
+    ).toMatchObject({ outcome: "cancelled", terminalSource: "reviewer-retry" });
+
+    failExternalVerificationAttempt({
+      attemptId: retry.attempt.id,
+      pluginId: "agentkit",
+      nowMs: 2_008,
+      errorClass: "proof-rejected",
+      databaseOptions,
+    });
+    expect(getExternalVerificationNativeActionState({ ...common, nowMs: 2_009 })).toEqual({
+      outcome: "ready",
+      action: { intent: "start", expectedAttemptId: retry.attempt.id },
     });
   });
 

@@ -205,6 +205,7 @@ export function createGatewayAuxHandlers(params: {
         createPluginApprovalHandlers(pluginApprovalManager, {
           forwarder: execApprovalForwarder,
           iosPushDelivery: pluginApprovalIosPushDelivery,
+          externalVerificationRuntime,
         }),
       ),
     { cacheRejections: true },
@@ -569,6 +570,14 @@ export function createGatewayAuxHandlers(params: {
       ),
       "exec.approval.resolve": createLazyHandler("exec.approval.resolve", loadExecApprovalHandlers),
       "plugin.approval.list": createLazyHandler("plugin.approval.list", loadPluginApprovalHandlers),
+      "plugin.approval.external.prepare": createLazyHandler(
+        "plugin.approval.external.prepare",
+        loadPluginApprovalHandlers,
+      ),
+      "plugin.approval.external.start": createLazyHandler(
+        "plugin.approval.external.start",
+        loadPluginApprovalHandlers,
+      ),
       "plugin.approval.request": createLazyHandler(
         "plugin.approval.request",
         loadPluginApprovalHandlers,

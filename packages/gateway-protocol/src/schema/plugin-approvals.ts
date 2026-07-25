@@ -14,6 +14,11 @@ import { NonEmptyString } from "./primitives.js";
 const MAX_PLUGIN_APPROVAL_TIMEOUT_MS = 600_000;
 const PLUGIN_APPROVAL_TITLE_MAX_LENGTH = 80;
 const PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH = 512;
+const PLUGIN_APPROVAL_EXTERNAL_ACTION_TOKEN_MAX_LENGTH = 256;
+
+const PluginApprovalExternalDecisionSchema = Type.String({
+  enum: ["allow-once", "allow-always"],
+});
 
 /** Approval request raised by a plugin before a sensitive tool action proceeds. */
 export const PluginApprovalRequestParamsSchema = closedObject({
@@ -58,7 +63,50 @@ export const PluginApprovalResolveParamsSchema = closedObject({
   decision: NonEmptyString,
 });
 
+/** Native reviewer request for the current core-issued external action generation. */
+export const PluginApprovalExternalPrepareParamsSchema = closedObject({
+  id: NonEmptyString,
+  decision: PluginApprovalExternalDecisionSchema,
+});
+
+/** Core-issued opaque action generation rendered by a native approval client. */
+export const PluginApprovalExternalPrepareResultSchema = closedObject({
+  intent: Type.String({ enum: ["start", "retry"] }),
+  actionToken: Type.String({
+    minLength: 1,
+    maxLength: PLUGIN_APPROVAL_EXTERNAL_ACTION_TOKEN_MAX_LENGTH,
+  }),
+});
+
+/** Native reviewer dispatch of a previously prepared external action generation. */
+export const PluginApprovalExternalStartParamsSchema = closedObject({
+  id: NonEmptyString,
+  decision: PluginApprovalExternalDecisionSchema,
+  actionToken: Type.String({
+    minLength: 1,
+    maxLength: PLUGIN_APPROVAL_EXTERNAL_ACTION_TOKEN_MAX_LENGTH,
+  }),
+});
+
+/** Challenge text returned through the approval control lane. */
+export const PluginApprovalExternalStartResultSchema = closedObject({
+  outcome: Type.String({ enum: ["started", "replay", "stale-action"] }),
+  presentations: Type.Array(Type.String({ minLength: 1, maxLength: 8_192 }), { maxItems: 8 }),
+});
+
 // Owner-local wire types derived directly from local schema consts so the
 // public plugin-sdk declaration graph never pulls in the ProtocolSchemas registry.
 export type PluginApprovalRequestParams = Static<typeof PluginApprovalRequestParamsSchema>;
 export type PluginApprovalResolveParams = Static<typeof PluginApprovalResolveParamsSchema>;
+export type PluginApprovalExternalPrepareParams = Static<
+  typeof PluginApprovalExternalPrepareParamsSchema
+>;
+export type PluginApprovalExternalPrepareResult = Static<
+  typeof PluginApprovalExternalPrepareResultSchema
+>;
+export type PluginApprovalExternalStartParams = Static<
+  typeof PluginApprovalExternalStartParamsSchema
+>;
+export type PluginApprovalExternalStartResult = Static<
+  typeof PluginApprovalExternalStartResultSchema
+>;

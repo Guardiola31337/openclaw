@@ -30,6 +30,15 @@ export type TuiChatSendResult = {
 };
 
 export type TuiApprovalDecision = "allow-once" | "allow-always" | "deny";
+export type TuiExternalApprovalDecision = Exclude<TuiApprovalDecision, "deny">;
+export type TuiPreparedExternalApprovalAction = {
+  intent: "start" | "retry";
+  actionToken: string;
+};
+export type TuiExternalApprovalStartResult = {
+  outcome: "started" | "replay" | "stale-action";
+  presentations: string[];
+};
 
 type TuiTaskSuggestionActionCapabilities = {
   canAccept: boolean;
@@ -45,6 +54,10 @@ export type TuiPluginApproval = {
     severity?: "info" | "warning" | "critical" | null;
     toolName?: string | null;
     allowedDecisions?: readonly TuiApprovalDecision[] | null;
+    externalResolution?: {
+      label: string;
+      decisions: readonly TuiExternalApprovalDecision[];
+    } | null;
     agentId?: string | null;
     sessionKey?: string | null;
   };
@@ -207,6 +220,15 @@ export type TuiBackend = {
   listModels: () => Promise<TuiModelChoice[]>;
   listCommands?: (opts?: CommandsListParams) => Promise<CommandEntry[]>;
   listPluginApprovals?: () => Promise<unknown>;
+  prepareExternalPluginApproval?: (
+    id: string,
+    decision: TuiExternalApprovalDecision,
+  ) => Promise<TuiPreparedExternalApprovalAction>;
+  startExternalPluginApproval?: (
+    id: string,
+    decision: TuiExternalApprovalDecision,
+    actionToken: string,
+  ) => Promise<TuiExternalApprovalStartResult>;
   resolvePluginApproval?: (id: string, decision: TuiApprovalDecision) => Promise<{ ok?: boolean }>;
   getTaskSuggestionActionCapabilities?: () => TuiTaskSuggestionActionCapabilities;
   listTaskSuggestions?: () => Promise<TaskSuggestion[]>;

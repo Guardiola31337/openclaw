@@ -1,5 +1,6 @@
-import { formatErrorMessage } from "../infra/errors.js";
 // Gateway-lifetime dispatcher for plugin-bound external approval verification.
+import { createHash, randomUUID } from "node:crypto";
+import { formatErrorMessage } from "../infra/errors.js";
 import type { ExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import type { PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
 import {
@@ -30,6 +31,7 @@ import {
   completeExternalVerificationAttempt,
   failExternalVerificationAttempt,
   getExternalVerificationAttemptSnapshot,
+  getExternalVerificationNativeActionState,
   startExternalVerificationAttempt,
 } from "./plugin-external-verification-store.js";
 import {
@@ -56,7 +58,29 @@ type LiveAttempt = {
 type AttemptSetup = {
   approvalId: string;
   presentations: string[];
-  promise: Promise<PluginExternalVerificationAttemptSnapshot>;
+  promise: Promise<{
+    outcome: "started";
+    attempt: PluginExternalVerificationAttemptSnapshot;
+  }>;
+};
+
+type NativeAction = {
+  approvalId: string;
+  decision: "allow-once" | "allow-always";
+  expectedAttemptId: string | null;
+  interactionId: string;
+  intent: "start" | "retry";
+  pluginId: string;
+  token: string;
+  verifierOwner: object;
+};
+
+export type PreparedExternalVerificationNativeAction = Pick<NativeAction, "intent" | "token">;
+
+export type ExternalVerificationNativeDispatchResult = {
+  outcome: "started" | "replay" | "stale-action";
+  attempt: PluginExternalVerificationAttemptSnapshot;
+  presentations: string[];
 };
 
 type ExternalVerificationRuntimeState = {
@@ -103,6 +127,9 @@ export class PluginExternalVerificationRuntime {
   private readonly attemptSetups = new Map<string, AttemptSetup>();
   private context: GatewayRequestContext | null = null;
   private readonly liveAttempts = new Map<string, LiveAttempt>();
+  private readonly nativeActionsByGeneration = new Map<string, NativeAction>();
+  private readonly nativeActionsByToken = new Map<string, NativeAction>();
+  private readonly verifierOwnerIds = new WeakMap<object, string>();
   private readonly stopRegistryLifecycleListener: () => void;
 
   constructor(
@@ -135,6 +162,7 @@ export class PluginExternalVerificationRuntime {
     }
     this.abortApprovalAttempts(event.record.id, event.record.terminalReason ?? "approval-terminal");
     this.clearApprovalAttemptSetups(event.record.id);
+    this.clearApprovalNativeActions(event.record.id);
   }
 
   private abortApprovalAttempts(approvalId: string, reason: string, exceptId?: string): void {
@@ -144,6 +172,16 @@ export class PluginExternalVerificationRuntime {
       }
       live.controller.abort(new Error(`external verification cancelled: ${reason}`));
       this.liveAttempts.delete(attemptId);
+    }
+  }
+
+  private clearApprovalNativeActions(approvalId: string): void {
+    for (const [generation, action] of this.nativeActionsByGeneration) {
+      if (action.approvalId !== approvalId) {
+        continue;
+      }
+      this.nativeActionsByGeneration.delete(generation);
+      this.nativeActionsByToken.delete(action.token);
     }
   }
 
@@ -157,6 +195,16 @@ export class PluginExternalVerificationRuntime {
 
   private resolveVerifier(pluginId: string): PluginExternalApprovalVerifierRegistration | null {
     return (this.params.resolveVerifier ?? getPluginExternalApprovalVerifier)(pluginId);
+  }
+
+  private getVerifierOwnerId(owner: object): string {
+    const existing = this.verifierOwnerIds.get(owner);
+    if (existing) {
+      return existing;
+    }
+    const id = randomUUID();
+    this.verifierOwnerIds.set(owner, id);
+    return id;
   }
 
   private revokeRetiredVerifierAttempts(): void {
@@ -178,6 +226,19 @@ export class PluginExternalVerificationRuntime {
       live.controller.abort(new Error("external verification cancelled: verifier-retired"));
       this.liveAttempts.delete(attemptId);
     }
+    for (const [generation, action] of this.nativeActionsByGeneration) {
+      let currentOwner: object | undefined;
+      try {
+        currentOwner = this.resolveVerifier(action.pluginId)?.owner;
+      } catch {
+        // A failed registry composition cannot preserve an issued capability.
+      }
+      if (currentOwner === action.verifierOwner) {
+        continue;
+      }
+      this.nativeActionsByGeneration.delete(generation);
+      this.nativeActionsByToken.delete(action.token);
+    }
   }
 
   async start(params: {
@@ -187,20 +248,49 @@ export class PluginExternalVerificationRuntime {
     reviewerDeviceId?: string;
     present: PresentExternalVerification;
   }): Promise<PluginExternalVerificationAttemptSnapshot> {
+    return (
+      await this.startDetailed({
+        ...params,
+      })
+    ).attempt;
+  }
+
+  private async startDetailed(params: {
+    approvalId: string;
+    decision: "allow-once" | "allow-always";
+    interactionId: string;
+    reviewerDeviceId?: string;
+    nativeAction?: {
+      intent: "start" | "retry";
+      expectedAttemptId: string | null;
+    };
+    present: PresentExternalVerification;
+  }): Promise<{
+    outcome: "started" | "replay" | "stale-action";
+    attempt: PluginExternalVerificationAttemptSnapshot;
+  }> {
     const started = startExternalVerificationAttempt({
       approvalId: params.approvalId,
       decision: params.decision,
       interactionId: params.interactionId,
       reviewerDeviceId: params.reviewerDeviceId,
+      nativeAction: params.nativeAction,
       runtimeEpoch: this.params.runtimeEpoch,
       databaseOptions: this.params.databaseOptions,
     });
-    if (started.outcome !== "started" && started.outcome !== "replay") {
+    if (
+      started.outcome !== "started" &&
+      started.outcome !== "replay" &&
+      started.outcome !== "stale-action"
+    ) {
       throw new Error(`external verification unavailable: ${started.outcome}`);
+    }
+    if (!started.attempt) {
+      throw new Error("external verification action is stale; prepare a fresh action");
     }
     const record = requireApprovalRecord(params.approvalId, this.params.databaseOptions);
     const attemptSnapshot = snapshotAttemptWithRecord(started.attempt, record);
-    if (started.outcome === "replay") {
+    if (started.outcome === "replay" || started.outcome === "stale-action") {
       const setup = this.attemptSetups.get(attemptSnapshot.id);
       // Setup failure is already durable. Replay must return that terminal
       // attempt instead of rethrowing the first delivery's transient error.
@@ -215,7 +305,10 @@ export class PluginExternalVerificationRuntime {
         pluginId: attemptSnapshot.context.pluginId,
         databaseOptions: this.params.databaseOptions,
       });
-      return current ? snapshotAttemptWithRecord(current, record) : attemptSnapshot;
+      return {
+        outcome: started.outcome,
+        attempt: current ? snapshotAttemptWithRecord(current, record) : attemptSnapshot,
+      };
     }
     // The store has already cancelled an older attempt. Revoke its in-memory
     // presentation capability even when the replacement verifier is unavailable.
@@ -305,7 +398,7 @@ export class PluginExternalVerificationRuntime {
         requireApprovalRecord(attempt.context.approvalId, this.params.databaseOptions),
       );
     };
-    const setupPromise = Promise.resolve().then(async () => {
+    const setupPromise: AttemptSetup["promise"] = Promise.resolve().then(async () => {
       try {
         await verifier.handler(attempt);
         if (presentationCount === 0) {
@@ -315,15 +408,15 @@ export class PluginExternalVerificationRuntime {
         if (!live) {
           const completed = readPluginCompletion();
           if (completed) {
-            return completed;
+            return { outcome: "started", attempt: completed };
           }
           throw new Error("external verifier was retired during setup");
         }
-        return attemptSnapshot;
+        return { outcome: "started", attempt: attemptSnapshot };
       } catch (error) {
         const completed = readPluginCompletion();
         if (completed) {
-          return completed;
+          return { outcome: "started", attempt: completed };
         }
         failExternalVerificationAttempt({
           attemptId: attempt.id,
@@ -342,6 +435,89 @@ export class PluginExternalVerificationRuntime {
       promise: setupPromise,
     });
     return await setupPromise;
+  }
+
+  prepareNativeAction(params: {
+    approvalId: string;
+    decision: "allow-once" | "allow-always";
+    reviewerDeviceId?: string;
+  }): PreparedExternalVerificationNativeAction {
+    const state = getExternalVerificationNativeActionState({
+      ...params,
+      runtimeEpoch: this.params.runtimeEpoch,
+      databaseOptions: this.params.databaseOptions,
+    });
+    if (state.outcome !== "ready") {
+      throw new Error(`external verification unavailable: ${state.outcome}`);
+    }
+    const record = requireApprovalRecord(params.approvalId, this.params.databaseOptions);
+    const pluginId =
+      record.presentation.kind === "plugin" ? record.presentation.pluginId?.trim() : "";
+    const verifier = pluginId ? this.resolveVerifier(pluginId) : null;
+    if (!pluginId || !verifier) {
+      throw new Error("external verification verifier is not available");
+    }
+    const generation = JSON.stringify([
+      params.approvalId,
+      params.decision,
+      state.action.intent,
+      state.action.expectedAttemptId,
+      this.getVerifierOwnerId(verifier.owner),
+    ]);
+    const existing = this.nativeActionsByGeneration.get(generation);
+    if (existing) {
+      return { intent: existing.intent, token: existing.token };
+    }
+    const token = `external-action:${randomUUID()}`;
+    const action: NativeAction = {
+      approvalId: params.approvalId,
+      decision: params.decision,
+      expectedAttemptId: state.action.expectedAttemptId,
+      interactionId: createHash("sha256").update(token).digest("hex"),
+      intent: state.action.intent,
+      pluginId,
+      token,
+      verifierOwner: verifier.owner,
+    };
+    this.nativeActionsByGeneration.set(generation, action);
+    this.nativeActionsByToken.set(token, action);
+    return { intent: action.intent, token };
+  }
+
+  async dispatchNativeAction(params: {
+    approvalId: string;
+    decision: "allow-once" | "allow-always";
+    reviewerDeviceId?: string;
+    token: string;
+  }): Promise<ExternalVerificationNativeDispatchResult> {
+    const action = this.nativeActionsByToken.get(params.token);
+    if (
+      !action ||
+      action.approvalId !== params.approvalId ||
+      action.decision !== params.decision ||
+      this.resolveVerifier(action.pluginId)?.owner !== action.verifierOwner
+    ) {
+      throw new Error("external verification action is invalid");
+    }
+    const presentations: string[] = [];
+    const dispatched = await this.startDetailed({
+      approvalId: action.approvalId,
+      decision: action.decision,
+      interactionId: action.interactionId,
+      reviewerDeviceId: params.reviewerDeviceId,
+      nativeAction: {
+        intent: action.intent,
+        expectedAttemptId: action.expectedAttemptId,
+      },
+      present: async (message) => {
+        presentations.push(message);
+      },
+    });
+    return {
+      outcome: dispatched.outcome,
+      attempt: dispatched.attempt,
+      presentations,
+    };
   }
 
   async complete(
@@ -446,6 +622,8 @@ export class PluginExternalVerificationRuntime {
     clearExternalVerificationCompletionRuntime(this);
     this.liveAttempts.clear();
     this.attemptSetups.clear();
+    this.nativeActionsByGeneration.clear();
+    this.nativeActionsByToken.clear();
   }
 }
 
