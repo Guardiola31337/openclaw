@@ -533,6 +533,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       activeId = null;
       resolvingIds.add(approval.id);
       closeActiveOverlay();
+      externalPresentations.delete(approval.id);
       deps.requestRender();
       try {
         const prepared = await preparedActions.get(decision);

@@ -349,6 +349,47 @@ describe("createPluginApprovalHandlers", () => {
       });
     });
 
+    it("rejects a native replay whose verifier attempt already failed", async () => {
+      const handlers = createPluginApprovalHandlers(manager, {
+        externalVerificationRuntime: {
+          dispatchNativeAction: vi.fn().mockResolvedValue({
+            outcome: "replay",
+            presentations: [],
+            attempt: { outcome: "failed" },
+          }),
+        } as unknown as PluginExternalVerificationRuntime,
+      });
+      const respond = vi.fn();
+      await expectDefined(
+        handlers["plugin.approval.external.start"],
+        "start handler test invariant",
+      )(
+        createMockOptions(
+          "plugin.approval.external.start",
+          {
+            id: "plugin:approval-1",
+            decision: "allow-once",
+            actionToken: "external-action:test",
+          },
+          {
+            client: createClient({
+              deviceId: "device-reviewer",
+              scopes: ["operator.approvals"],
+            }),
+            respond,
+          },
+        ),
+      );
+
+      expect(respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({
+          message: "external verification attempt failed",
+        }),
+      );
+    });
+
     it("rejects an approval-scoped client without a paired reviewer device", async () => {
       const prepareNativeAction = vi.fn();
       const handlers = createPluginApprovalHandlers(manager, {

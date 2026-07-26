@@ -150,6 +150,14 @@ export function createPluginApprovalHandlers(
         if (!dispatched) {
           throw new Error("external verification approval runtime is not available");
         }
+        const attemptOutcome = dispatched.attempt?.outcome;
+        if (
+          attemptOutcome === "failed" ||
+          attemptOutcome === "cancelled" ||
+          attemptOutcome === "timed-out"
+        ) {
+          throw new Error(`external verification attempt ${attemptOutcome}`);
+        }
         respond(
           true,
           { outcome: dispatched.outcome, presentations: dispatched.presentations },

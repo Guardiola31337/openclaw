@@ -497,6 +497,74 @@ describe("TUI plugin approvals", () => {
     expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
   });
 
+  it("clears a previous challenge before a failed retry", async () => {
+    const harness = createHarness();
+    harness.prepareExternalPluginApproval
+      .mockResolvedValueOnce({ intent: "start", actionToken: "action-1" })
+      .mockResolvedValueOnce({ intent: "retry", actionToken: "action-2" });
+    harness.startExternalPluginApproval
+      .mockResolvedValueOnce({
+        outcome: "started",
+        presentations: ["Old challenge must not survive retry"],
+      })
+      .mockRejectedValueOnce(new Error("retry unavailable"));
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-1",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.openOverlay).toHaveBeenCalledTimes(2);
+    });
+    expect(
+      stripAnsi(
+        expectDefined(harness.openOverlay.mock.calls[1]?.[0], "challenge prompt test invariant")
+          .render(80)
+          .join("\n"),
+      ),
+    ).toContain("Old challenge must not survive retry");
+
+    harness.selectors[1]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[1]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.openOverlay).toHaveBeenCalledTimes(3);
+    });
+    expect(
+      stripAnsi(
+        expectDefined(harness.openOverlay.mock.calls[2]?.[0], "retry prompt test invariant")
+          .render(80)
+          .join("\n"),
+      ),
+    ).not.toContain("Old challenge must not survive retry");
+    expect(harness.addSystem).toHaveBeenCalledWith(
+      "workspace skill approval failed: retry unavailable",
+    );
+  });
+
   it("keeps explicit denial available for external verification approvals", async () => {
     const harness = createHarness();
     harness.controller.handleEvent(
