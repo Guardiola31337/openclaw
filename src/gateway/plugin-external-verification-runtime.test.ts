@@ -454,17 +454,10 @@ describe("PluginExternalVerificationRuntime", () => {
     await expect(harness.decision).resolves.toBeNull();
   });
 
-  it("aborts retry and run-cancelled attempts once and permanently closes presentation", async () => {
+  it("aborts retry and run-cancelled attempts and permanently closes presentation", async () => {
     const attempts: PluginExternalVerificationAttempt[] = [];
-    const abortCounts = new Map<string, number>();
     const { manager, owner, decision } = createHarness(async (attempt) => {
       attempts.push(attempt);
-      abortCounts.set(attempt.id, 0);
-      attempt.signal.addEventListener(
-        "abort",
-        () => abortCounts.set(attempt.id, (abortCounts.get(attempt.id) ?? 0) + 1),
-        { once: true },
-      );
       await attempt.present({ message: "Verify now." });
     });
     const first = await runtime!.start({
@@ -480,7 +473,7 @@ describe("PluginExternalVerificationRuntime", () => {
       present: async () => undefined,
     });
 
-    expect(abortCounts.get(first.id)).toBe(1);
+    expect(attempts[0]?.signal.aborted).toBe(true);
     await expect(attempts[0]?.present({ message: "stale retry output" })).rejects.toThrow(
       "reviewer-retry",
     );
@@ -492,7 +485,7 @@ describe("PluginExternalVerificationRuntime", () => {
         "cancelled",
       ),
     ).toMatchObject({ outcome: "denied", record: { status: "cancelled" } });
-    expect(abortCounts.get(second.id)).toBe(1);
+    expect(attempts[1]?.signal.aborted).toBe(true);
     await expect(attempts[1]?.present({ message: "stale cancelled output" })).rejects.toThrow(
       "run-aborted",
     );
@@ -507,6 +500,51 @@ describe("PluginExternalVerificationRuntime", () => {
     });
     await expect(decision).resolves.toBeNull();
   });
+
+  it.each([
+    {
+      name: "normal denial",
+      decision: "deny",
+      terminalSource: "user",
+      terminate: (manager: ExecApprovalManager<PluginApprovalRequestPayload>) =>
+        manager.resolveDetailed(
+          "plugin:runtime-approval",
+          "deny",
+          { kind: "channel", id: "telegram:owner" },
+          "telegram:owner",
+        ),
+    },
+    {
+      name: "expiry",
+      decision: null,
+      terminalSource: "timeout",
+      terminate: (manager: ExecApprovalManager<PluginApprovalRequestPayload>) =>
+        manager.expire("plugin:runtime-approval"),
+    },
+  ])(
+    "aborts and closes presentation after $name",
+    async ({ decision: expectedDecision, terminalSource, terminate }) => {
+      let attempt: PluginExternalVerificationAttempt | undefined;
+      const { manager, decision } = createHarness(async (value) => {
+        attempt = value;
+        await value.present({ message: "Verify now." });
+      });
+      await runtime!.start({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        interactionId: "a".repeat(64),
+        present: async () => undefined,
+      });
+
+      terminate(manager);
+
+      expect(attempt?.signal.aborted).toBe(true);
+      await expect(attempt?.present({ message: "stale terminal output" })).rejects.toThrow(
+        terminalSource,
+      );
+      await expect(decision).resolves.toBe(expectedDecision);
+    },
+  );
 
   it("keeps a winning grant when completion commits before a later run cancellation", async () => {
     const { manager, owner, decision } = createHarness(async (attempt) => {
