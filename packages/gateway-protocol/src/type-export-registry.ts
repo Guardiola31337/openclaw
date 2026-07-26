@@ -419,6 +419,7 @@ export type {
   ApprovalAllowDecision,
   ApprovalTerminalReason,
   PluginApprovalSeverity,
+  PluginApprovalExternalResolution,
   ExecApprovalPresentation,
   PluginApprovalPresentation,
   ApprovalPresentation,
