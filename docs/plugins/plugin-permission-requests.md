@@ -171,8 +171,8 @@ export default definePluginEntry({
       })();
     });
 
-    api.on("before_tool_call", (_event, ctx) => {
-      if (ctx.toolName !== "transfer_funds") {
+    api.on("before_tool_call", (event) => {
+      if (event.toolName !== "transfer_funds") {
         return;
       }
       return {

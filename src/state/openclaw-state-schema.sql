@@ -388,7 +388,7 @@ CREATE TABLE IF NOT EXISTS plugin_external_verification_attempts (
   expires_at_ms INTEGER NOT NULL,
   ended_at_ms INTEGER,
   outcome TEXT CHECK (outcome IN ('succeeded', 'failed', 'cancelled', 'timed-out')),
-  error_class TEXT,
+  error_class TEXT CHECK (error_class IS NULL OR length(error_class) BETWEEN 1 AND 64),
   terminal_source TEXT,
   completion_applied INTEGER CHECK (completion_applied IN (0, 1)),
   grant_authorization_id TEXT,

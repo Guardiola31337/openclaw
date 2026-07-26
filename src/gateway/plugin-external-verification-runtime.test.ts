@@ -186,7 +186,7 @@ describe("PluginExternalVerificationRuntime", () => {
     expect(readApproval(databaseOptions)).toMatchObject({ status: "pending" });
   });
 
-  it("returns the durable failed attempt when a setup failure is redelivered", async () => {
+  it("returns a durable setup failure without replaying its closed presentation", async () => {
     const handler = vi.fn(async (attempt: PluginExternalVerificationAttempt) => {
       await attempt.present({ message: "Verify this request." });
       throw new Error("setup failed");
@@ -214,13 +214,15 @@ describe("PluginExternalVerificationRuntime", () => {
       terminalSource: "verifier-error",
     });
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(replayPresent).toHaveBeenCalledWith("Verify this request.");
+    expect(replayPresent).not.toHaveBeenCalled();
   });
 
   it("durably fails an attempt when verifier lookup throws", async () => {
     createHarness(() => undefined, {
       resolveVerifier: () => {
-        throw new Error("registry unavailable");
+        const error = new Error("registry unavailable");
+        Object.defineProperty(error, "name", { value: 42 });
+        throw error;
       },
     });
 
@@ -240,6 +242,7 @@ describe("PluginExternalVerificationRuntime", () => {
         present: async () => undefined,
       }),
     ).resolves.toMatchObject({
+      errorClass: "unknown-error",
       outcome: "failed",
       terminalSource: "verifier-error",
     });

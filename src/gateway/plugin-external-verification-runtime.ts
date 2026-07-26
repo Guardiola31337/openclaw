@@ -41,6 +41,7 @@ import type { GatewayRequestContext } from "./server-methods/types.js";
 
 const MAX_EXTERNAL_VERIFICATION_PRESENTATION_LENGTH = 8_192;
 const MAX_EXTERNAL_VERIFICATION_PRESENTATIONS = 8;
+const EXTERNAL_VERIFICATION_ERROR_CLASS_PATTERN = /^[A-Za-z][A-Za-z0-9._:-]{0,63}$/u;
 
 type PresentExternalVerification = (message: string) => Promise<void>;
 
@@ -97,6 +98,19 @@ function snapshotAttemptWithRecord(
       ...(record.source.sessionId ? { sessionId: record.source.sessionId } : {}),
     }),
   });
+}
+
+function classifyExternalVerificationError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "unknown-error";
+  }
+  try {
+    const rawName: unknown = error.name;
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    return EXTERNAL_VERIFICATION_ERROR_CLASS_PATTERN.test(name) ? name : "unknown-error";
+  } catch {
+    return "unknown-error";
+  }
 }
 
 export class PluginExternalVerificationRuntime {
@@ -205,17 +219,20 @@ export class PluginExternalVerificationRuntime {
       // Setup failure is already durable. Replay must return that terminal
       // attempt instead of rethrowing the first delivery's transient error.
       await setup?.promise.catch(() => undefined);
-      const presentations =
-        setup?.presentations ?? this.liveAttempts.get(attemptSnapshot.id)?.presentations ?? [];
-      for (const presentation of presentations) {
-        await params.present(presentation);
-      }
       const current = getExternalVerificationAttemptSnapshot({
         attemptId: attemptSnapshot.id,
         pluginId: attemptSnapshot.context.pluginId,
         databaseOptions: this.params.databaseOptions,
       });
-      return current ? snapshotAttemptWithRecord(current, record) : attemptSnapshot;
+      const replaySnapshot = current ? snapshotAttemptWithRecord(current, record) : attemptSnapshot;
+      const presentations =
+        setup?.presentations ?? this.liveAttempts.get(attemptSnapshot.id)?.presentations ?? [];
+      if (!replaySnapshot.outcome) {
+        for (const presentation of presentations) {
+          await params.present(presentation);
+        }
+      }
+      return replaySnapshot;
     }
     // The store has already cancelled an older attempt. Revoke its in-memory
     // presentation capability even when the replacement verifier is unavailable.
@@ -228,7 +245,7 @@ export class PluginExternalVerificationRuntime {
       failExternalVerificationAttempt({
         attemptId: attemptSnapshot.id,
         pluginId: attemptSnapshot.context.pluginId,
-        errorClass: error instanceof Error ? error.name : "unknown-error",
+        errorClass: classifyExternalVerificationError(error),
         databaseOptions: this.params.databaseOptions,
       });
       throw new Error(`external verifier lookup failed: ${formatErrorMessage(error)}`, {
@@ -328,7 +345,7 @@ export class PluginExternalVerificationRuntime {
         failExternalVerificationAttempt({
           attemptId: attempt.id,
           pluginId: attempt.context.pluginId,
-          errorClass: error instanceof Error ? error.name : "unknown-error",
+          errorClass: classifyExternalVerificationError(error),
           databaseOptions: this.params.databaseOptions,
         });
         controller.abort(error);

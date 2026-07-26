@@ -1,5 +1,6 @@
 // Defines plugin approval request/resolution payloads and actions.
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+import type { PluginExternalResolution } from "../plugins/external-verification-approval-types.js";
 import { sanitizeExecApprovalDisplayText } from "./exec-approval-command-display.js";
 import type { ExecApprovalDecision } from "./exec-approvals.js";
 
@@ -25,13 +26,12 @@ export type PluginApprovalRequestPayload = {
   toolCallId?: string | null;
   allowedDecisions?: readonly ExecApprovalDecision[] | null;
   /** Trusted in-process metadata; public Gateway callers cannot submit this field. */
-  externalResolution?: {
-    label: string;
-    decisions?: readonly ("allow-once" | "allow-always")[];
-  } | null;
+  externalResolution?: PluginExternalResolution | null;
   actions?: readonly PluginApprovalActionView[] | null;
   agentId?: string | null;
   sessionKey?: string | null;
+  sessionId?: string | null;
+  runId?: string | null;
   turnSourceChannel?: string | null;
   turnSourceTo?: string | null;
   turnSourceAccountId?: string | null;
@@ -126,8 +126,8 @@ export function resolvePluginApprovalRequestAllowedDecisions(params?: {
 
 /** Normalize the bounded external route shared by creation and presentation paths. */
 export function normalizePluginExternalResolution(
-  value: PluginApprovalRequestPayload["externalResolution"],
-): NonNullable<PluginApprovalRequestPayload["externalResolution"]> | null {
+  value: PluginExternalResolution | null | undefined,
+): PluginExternalResolution | null {
   if (!value) {
     return null;
   }

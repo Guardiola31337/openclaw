@@ -2,6 +2,14 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { emptyPluginConfigSchema } from "../plugins/config-schema.js";
 import type {
+  PluginExternalResolution as _PluginExternalResolution,
+  PluginExternalVerificationAttempt as _PluginExternalVerificationAttempt,
+  PluginExternalVerificationCompletionResult as _PluginExternalVerificationCompletionResult,
+  PluginExternalVerificationContext as _PluginExternalVerificationContext,
+  PluginExternalVerificationGrantAuthorization as _PluginExternalVerificationGrantAuthorization,
+  PluginExternalVerificationGrantStore as _PluginExternalVerificationGrantStore,
+} from "../plugins/external-verification-approval-types.js";
+import type {
   AgentHarness as _AgentHarness,
   AgentPromptGuidance as _AgentPromptGuidance,
   AgentPromptGuidanceEntry as _AgentPromptGuidanceEntry,
@@ -43,12 +51,6 @@ import type {
   PluginCommandContext as _PluginCommandContext,
   PluginCommandResult as _PluginCommandResult,
   PluginControlUiDescriptor as _PluginControlUiDescriptor,
-  PluginExternalResolution as _PluginExternalResolution,
-  PluginExternalVerificationContext as _PluginExternalVerificationContext,
-  PluginExternalVerificationAttempt as _PluginExternalVerificationAttempt,
-  PluginExternalVerificationCompletionResult as _PluginExternalVerificationCompletionResult,
-  PluginExternalVerificationGrantAuthorization as _PluginExternalVerificationGrantAuthorization,
-  PluginExternalVerificationGrantStore as _PluginExternalVerificationGrantStore,
   PluginHeartbeatPromptContributionEvent as _PluginHeartbeatPromptContributionEvent,
   PluginHeartbeatPromptContributionResult as _PluginHeartbeatPromptContributionResult,
   PluginJsonValue as _PluginJsonValue,
