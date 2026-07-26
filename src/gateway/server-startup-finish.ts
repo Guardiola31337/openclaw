@@ -73,6 +73,7 @@ export async function finishGatewayStartup(params: {
     ensureSandboxHostPort,
     terminalLaunchPolicy,
     execApprovalManager,
+    externalVerificationRuntime,
     cancelRunBoundApprovals,
     forwardPluginApprovalRequest,
     pluginApprovalIosPushDelivery,
@@ -287,6 +288,7 @@ export async function finishGatewayStartup(params: {
       broadcastVoiceWakeRoutingChanged,
     });
   });
+  externalVerificationRuntime.attachContext(gatewayRequestContext);
   pluginGatewayContext.current = gatewayRequestContext;
   const { createGatewayInstanceRuntime } = await import("./server-instance-runtime.js");
   const gatewayInstanceRuntimeLocal = createGatewayInstanceRuntime({
@@ -498,7 +500,7 @@ export async function finishGatewayStartup(params: {
             }
           },
           onGatewayLifetimeSidecars: (gatewayLifetimeSidecars) => {
-            runtimeState.gatewayLifetimeSidecars = gatewayLifetimeSidecars;
+            runtimeState.gatewayLifetimeSidecars.push(...gatewayLifetimeSidecars);
             stopPostReadySidecarsAfterCloseStarted({
               postReadySidecars: gatewayLifetimeSidecars,
               closeStarted: lifecycle.closePreludeStarted,

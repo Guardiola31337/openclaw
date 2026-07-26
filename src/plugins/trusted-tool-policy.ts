@@ -2,9 +2,9 @@
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isPlainObject } from "../utils.js";
+import type { PluginHostBeforeToolCallResult } from "./hook-before-tool-call-result.js";
 import type {
   PluginHookBeforeToolCallEvent,
-  PluginHookBeforeToolCallResult,
   PluginHookToolContext,
   PluginHookToolInputKind,
   PluginHookToolKind,
@@ -129,7 +129,7 @@ function trustedPolicyDefaultBlockReason(registration: TrustedPolicyRegistration
 function trustedPolicyFailureResult(
   registration: TrustedPolicyRegistration,
   detail: string,
-): PluginHookBeforeToolCallResult {
+): PluginHostBeforeToolCallResult {
   return {
     block: true,
     blockReason: `${trustedPolicyDefaultBlockReason(registration)}: ${detail}`,
@@ -194,11 +194,11 @@ export async function runTrustedToolPolicies(
       | undefined;
     registry?: TrustedToolPolicyRegistry;
   },
-): Promise<PluginHookBeforeToolCallResult | undefined> {
+): Promise<PluginHostBeforeToolCallResult | undefined> {
   const policies = copyTrustedPolicyRegistrations(options?.registry ?? getActivePluginRegistry());
   let adjustedParams = event.params;
   let hasAdjustedParams = false;
-  let approval: PluginHookBeforeToolCallResult["requireApproval"];
+  let approval: PluginHostBeforeToolCallResult["requireApproval"];
   const sessionExtensionStateCache = new Map<string, Record<string, PluginJsonValue> | undefined>();
   let resolvedSessionConfig: OpenClawConfig | undefined = options?.config;
   let didResolveSessionConfig = Boolean(options?.config);
@@ -318,7 +318,10 @@ export async function runTrustedToolPolicies(
         currentDerivedEvent = normalizeDerivedEventFields(options?.deriveEvent?.(adjustedParams));
       }
       if ("requireApproval" in decision && decision.requireApproval && !approval) {
-        approval = decision.requireApproval;
+        approval = {
+          ...decision.requireApproval,
+          pluginId: trustedPolicyDiagnosticPluginId(registration),
+        };
       }
     } catch {
       return trustedPolicyFailureResult(registration, "policy decision is unreadable");

@@ -45,9 +45,10 @@ import {
   closeOrphanedOperatorApprovals,
   pruneTerminalOperatorApprovals,
 } from "./operator-approval-store.js";
+import { PluginExternalVerificationRuntime } from "./plugin-external-verification-runtime.js";
 import { QuestionManager } from "./question-manager.js";
 import type { ChannelAutostartSuppression } from "./server-channels.js";
-import { cancelRunBoundExecApprovals } from "./server-methods/approval-run-cancellation.js";
+import { cancelRunBoundApprovals as cancelRunBoundApprovalsForManagers } from "./server-methods/approval-run-cancellation.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
 import {
   captureSharedGatewaySessionGenerationOwnership,
@@ -129,6 +130,7 @@ export function createGatewayAuxHandlers(params: {
     nowMs: approvalStartupNowMs,
   });
   pruneTerminalOperatorApprovals({ nowMs: approvalStartupNowMs });
+  let externalVerificationRuntime: PluginExternalVerificationRuntime | null = null;
   const createApprovalManager = <TPayload>(
     approvalKind: "exec" | "plugin" | "system-agent",
     resolveAllowedDecisions: (request: TPayload) => readonly ExecApprovalDecision[],
@@ -138,7 +140,10 @@ export function createGatewayAuxHandlers(params: {
       persistence: approvalPersistence,
       resolveAudienceSessionKeys: resolveApprovalSessionAudienceWithFallback,
       resolveAllowedDecisions,
-      onLifecycle: params.onApprovalLifecycle,
+      onLifecycle: (event) => {
+        params.onApprovalLifecycle?.(event);
+        externalVerificationRuntime?.onApprovalLifecycle(event);
+      },
       onError: (error, context) =>
         params.log.error?.(
           `${context.approvalKind} approval ${context.operation} failed for ${context.approvalId}: ${String(error)}`,
@@ -150,14 +155,6 @@ export function createGatewayAuxHandlers(params: {
   );
   const execApprovalForwarder = createExecApprovalForwarder();
   const execApprovalIosPushDelivery = createExecApprovalIosPushDelivery({ log: params.log });
-  const cancelRunBoundApprovals = (runId: string, context: GatewayRequestContext): number =>
-    cancelRunBoundExecApprovals({
-      runId,
-      manager: execApprovalManager,
-      context,
-      forwarder: execApprovalForwarder,
-      iosPushDelivery: execApprovalIosPushDelivery,
-    });
   const loadExecApprovalHandlers = createLazyPromise(
     () =>
       import("./server-methods/exec-approval.js").then(({ createExecApprovalHandlers }) =>
@@ -182,6 +179,22 @@ export function createGatewayAuxHandlers(params: {
     resolveCanonicalPluginApprovalRequestAllowedDecisions,
   );
   const pluginApprovalIosPushDelivery = createPluginApprovalIosPushDelivery({ log: params.log });
+  externalVerificationRuntime = new PluginExternalVerificationRuntime({
+    manager: pluginApprovalManager,
+    runtimeEpoch: approvalPersistence.runtimeEpoch,
+    forwarder: execApprovalForwarder,
+    iosPushDelivery: pluginApprovalIosPushDelivery,
+  });
+  const cancelRunBoundApprovals = (runId: string, context: GatewayRequestContext): number =>
+    cancelRunBoundApprovalsForManagers({
+      runId,
+      execManager: execApprovalManager,
+      pluginManager: pluginApprovalManager,
+      context,
+      forwarder: execApprovalForwarder,
+      execIosPushDelivery: execApprovalIosPushDelivery,
+      pluginIosPushDelivery: pluginApprovalIosPushDelivery,
+    });
   const systemAgentApprovalManager = createApprovalManager<SystemAgentApprovalRequestPayload>(
     "system-agent",
     () => SYSTEM_AGENT_APPROVAL_DECISIONS,
@@ -539,6 +552,7 @@ export function createGatewayAuxHandlers(params: {
 
   return {
     execApprovalManager,
+    externalVerificationRuntime,
     cancelRunBoundApprovals,
     forwardPluginApprovalRequest: execApprovalForwarder.handlePluginApprovalRequested,
     pluginApprovalIosPushDelivery,

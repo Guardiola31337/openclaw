@@ -5,6 +5,7 @@ import type { GlobalHookRunnerRegistry } from "./hook-registry.types.js";
 import type { HookRunner } from "./hooks.js";
 import { isPluginRegistryRetired } from "./registry-lifecycle.js";
 import type {
+  PluginExternalApprovalVerifierRegistration,
   PluginRegistry,
   PluginTrustedToolPolicyRegistryRegistration,
 } from "./registry-types.js";
@@ -13,6 +14,7 @@ import { collectLivePluginRegistries } from "./runtime.js";
 
 type TrustedPolicyHookRunnerRegistry = GlobalHookRunnerRegistry & {
   trustedToolPolicies?: PluginTrustedToolPolicyRegistryRegistration[];
+  externalApprovalVerifiers?: PluginExternalApprovalVerifierRegistration[];
 };
 
 type HookRunnerGlobalState = {
@@ -216,6 +218,11 @@ function composeLiveHookRegistry(
       const rightRank = right.origin === "bundled" ? 0 : 1;
       return leftRank - rightRank;
     });
+  const externalApprovalVerifiers = sources.flatMap((registry, index) =>
+    (registry.externalApprovalVerifiers ?? []).filter(
+      (registration) => ownerSourceIndexByPluginId.get(registration.pluginId) === index,
+    ),
+  );
   return {
     hooks: sources.flatMap((registry, index) =>
       registry.hooks.filter((hook) => ownerSourceIndexByPluginId.get(hook.pluginId) === index),
@@ -227,6 +234,7 @@ function composeLiveHookRegistry(
       registry.plugins.filter((plugin) => ownerSourceIndexByPluginId.get(plugin.id) === index),
     ),
     trustedToolPolicies,
+    externalApprovalVerifiers,
   };
 }
 
@@ -250,6 +258,9 @@ export function createComposedHookRegistryFacade(
     get trustedToolPolicies() {
       return composeLiveHookRegistry(state.registry).trustedToolPolicies;
     },
+    get externalApprovalVerifiers() {
+      return composeLiveHookRegistry(state.registry).externalApprovalVerifiers;
+    },
   };
 }
 
@@ -257,4 +268,15 @@ export function createComposedHookRegistryFacade(
 export function getGlobalHookRunnerRegistry(): TrustedPolicyHookRunnerRegistry | null {
   const state = getHookRunnerGlobalState();
   return state.registry ? createComposedHookRegistryFacade(state) : null;
+}
+
+/** Resolve the verifier owned by the same live plugin registry selected for hook dispatch. */
+export function getPluginExternalApprovalVerifier(
+  pluginId: string,
+): PluginExternalApprovalVerifierRegistration | null {
+  return (
+    getGlobalHookRunnerRegistry()?.externalApprovalVerifiers?.find(
+      (registration) => registration.pluginId === pluginId,
+    ) ?? null
+  );
 }

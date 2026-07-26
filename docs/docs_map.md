@@ -6179,6 +6179,8 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H2: Choose the right gate
   - H2: Request approval before a tool call
   - H2: Decision behavior
+  - H2: Delegate allow decisions to an external verifier
+  - H3: Persist reusable trust
   - H2: Route approval prompts
   - H2: Codex native permissions
   - H2: Troubleshooting

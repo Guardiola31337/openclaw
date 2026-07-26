@@ -244,6 +244,7 @@ export async function startGatewayCoreRuntime(input: {
 
   const {
     execApprovalManager,
+    externalVerificationRuntime,
     cancelRunBoundApprovals,
     forwardPluginApprovalRequest,
     pluginApprovalIosPushDelivery,
@@ -269,6 +270,9 @@ export async function startGatewayCoreRuntime(input: {
       }),
       coreGatewayHandlers: coreGatewayHandlersLocal,
     };
+  });
+  runtimeState.gatewayLifetimeSidecars.push({
+    stop: () => externalVerificationRuntime.shutdown(),
   });
   approvalManagersForReplay.set("exec", execApprovalManager);
   approvalManagersForReplay.set("plugin", pluginApprovalManager);
@@ -544,6 +548,7 @@ export async function startGatewayCoreRuntime(input: {
     sessionObserver,
     approvalSessionEvents,
     execApprovalManager,
+    externalVerificationRuntime,
     cancelRunBoundApprovals,
     forwardPluginApprovalRequest,
     pluginApprovalIosPushDelivery,

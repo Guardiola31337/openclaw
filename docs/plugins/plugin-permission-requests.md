@@ -121,6 +121,120 @@ higher-priority hook requested approval.
 `allowedDecisions` limits the buttons and commands shown to the user. The
 Gateway rejects a resolve attempt for any decision the request did not offer.
 
+## Delegate allow decisions to an external verifier
+
+Use external verification when an installed plugin must run a separate
+proof-of-personhood, hardware-key, or owner-service ceremony before OpenClaw can
+allow a protected tool call. OpenClaw continues to own the approval, run,
+session, timeout, cancellation, and deny path.
+
+Declare the external choices from `before_tool_call`, then register the
+plugin's single verifier:
+
+```typescript
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+
+export default definePluginEntry({
+  id: "personhood",
+  name: "Personhood verifier",
+  register(api) {
+    api.approvals.onExternalVerification(async (attempt) => {
+      const challenge = await createChallenge({
+        attemptId: attempt.id,
+        approvalId: attempt.context.approvalId,
+        toolName: attempt.context.toolName,
+        signal: attempt.signal,
+      });
+
+      await attempt.present({
+        message: `Scan this challenge:\n${challenge.url}`,
+      });
+
+      void (async () => {
+        try {
+          const verified = await challenge.waitForResult(attempt.signal);
+          if (attempt.signal.aborted) {
+            return;
+          }
+          await api.approvals.completeExternalVerification({
+            attemptId: attempt.id,
+            outcome: verified ? "succeeded" : "failed",
+          });
+        } catch {
+          if (!attempt.signal.aborted) {
+            await api.approvals.completeExternalVerification({
+              attemptId: attempt.id,
+              outcome: "failed",
+            });
+          }
+        }
+      })();
+    });
+
+    api.on("before_tool_call", (_event, ctx) => {
+      if (ctx.toolName !== "transfer_funds") {
+        return;
+      }
+      return {
+        requireApproval: {
+          title: "Verify transfer",
+          description: "Complete personhood verification before this transfer.",
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify personhood",
+            decisions: ["allow-once", "allow-always"],
+          },
+        },
+      };
+    });
+  },
+});
+```
+
+The hook does not set `pluginId`; the host stamps the loaded plugin's identity.
+The verifier receives immutable host-derived context, including the approval,
+run, tool, and session. Bind the external challenge to `attempt.id` and the
+context values instead of accepting identity from a command or public Gateway
+caller.
+
+`attempt.present(...)` writes through the authenticated interaction that
+started the attempt. Present the challenge and return from the handler. Keep
+later polling or callback work cancellable through `attempt.signal`.
+
+The canonical text controls are:
+
+```text
+<external label>
+Verify once: `/approve plugin:<id> external allow-once`
+Verify and trust for session: `/approve plugin:<id> external allow-always`
+
+Deny: `/approve plugin:<id> deny`
+```
+
+Repeating the external command in the same interaction replays the existing
+attempt. A new text-command interaction starts a fresh attempt and cancels the
+active one. Completion, denial, timeout, run cancellation, and shutdown are
+first-answer-wins. Replayed completion returns `applied: false`.
+A verifier-declared `failed` outcome ends only that attempt; the canonical
+approval remains pending so the reviewer can submit a fresh retry or deny it.
+
+### Persist reusable trust
+
+Only a successful `allow-always` completion can include
+`grantAuthorization`. If the plugin supports session trust, persist that stable
+authorization and its exact scope with `api.approvals.openGrantStore()`.
+
+The store is bounded to 5,000 rows and scoped to the calling plugin. It provides
+`registerIfAbsent`, `lookup`, `entries`, and `update`; it does not expose delete
+or clear. Use terminal tombstones for expiry, revocation, consumption, and
+session reset so a replayed completion cannot recreate trust. Do not persist
+external proof material or proof nullifiers in the OpenClaw state database.
+
+An external plugin can use this narrow grant ledger even though broad
+`api.runtime.state` access remains unavailable. Treat `grantAuthorization.id`
+and `issuedAtMs` as host-issued values: do not replace them or extend expiry
+when completion is replayed.
+
 ## Route approval prompts
 
 Approval prompts can resolve in local UI surfaces or in chat channels that

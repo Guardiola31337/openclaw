@@ -349,6 +349,9 @@ plugins.
 | `api.registerCommand(...)`                                                           | Scoped plugin commands; command results can set `continueAgent: true` or `suppressReply: true`; Discord native commands support `descriptionLocalizations` |
 | `api.session.controls.registerControlUiDescriptor(...)`                              | Control UI contribution descriptors for session, tool, run, settings, or tab surfaces                                                                      |
 | `api.lifecycle.registerRuntimeLifecycle(...)`                                        | Cleanup callbacks for plugin-owned runtime resources on reset/delete/reload paths                                                                          |
+| `api.approvals.onExternalVerification(...)`                                          | Register one plugin-bound verifier for host-authenticated external approval attempts                                                                       |
+| `api.approvals.completeExternalVerification(...)`                                    | Complete an owned attempt with first-answer-wins host resolution                                                                                           |
+| `api.approvals.openGrantStore()`                                                     | Open bounded plugin-owned storage for reusable grant authorizations and terminal tombstones                                                                |
 | `api.agent.events.registerAgentEventSubscription(...)`                               | Sanitized event subscriptions for workflow state and monitors                                                                                              |
 | `api.runContext.setRunContext(...)` / `getRunContext(...)` / `clearRunContext(...)`  | Per-run plugin scratch state cleared on terminal run lifecycle                                                                                             |
 | `api.session.workflow.registerSessionSchedulerJob(...)`                              | Cleanup metadata for plugin-owned scheduler jobs; does not schedule work or create task records                                                            |
@@ -416,6 +419,14 @@ Use the grouped namespaces for new plugin code:
 - `api.agent.events.emitAgentEvent(...)`
 - `api.runContext.setRunContext(...)` / `getRunContext(...)` / `clearRunContext(...)`
 - `api.lifecycle.registerRuntimeLifecycle(...)`
+- `api.approvals.onExternalVerification(...)`
+- `api.approvals.completeExternalVerification(...)`
+- `api.approvals.openGrantStore()`
+
+External verification keeps approval identity and resolution inside the host.
+See [Plugin permission requests](/plugins/plugin-permission-requests#delegate-allow-decisions-to-an-external-verifier)
+for the handler lifecycle, canonical operator commands, cancellation rules, and
+grant-store contract.
 
 The equivalent flat methods remain available as deprecated compatibility
 aliases for existing plugins. Do not add new plugin code that calls

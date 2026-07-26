@@ -1,9 +1,12 @@
 import path from "node:path";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import { createPluginStateSyncKeyedStore } from "../plugin-state/plugin-state-store.js";
 import { resolveUserPath } from "../utils.js";
 import { emitPluginAgentEvent } from "./agent-event-emission.js";
 import { buildPluginApi } from "./api-builder.js";
+import { completeExternalVerificationForPlugin } from "./external-verification-approval-runtime-state.js";
+import type { PluginExternalVerificationGrantStore } from "./external-verification-approval-types.js";
 import { sendPluginSessionAttachment } from "./host-hook-attachments.js";
 import {
   clearPluginRunContext,
@@ -26,6 +29,31 @@ import {
 } from "./registry-state.js";
 import type { PluginRecord } from "./registry-types.js";
 import type { OpenClawPluginApi, PluginLogger, PluginRegistrationMode } from "./types.js";
+
+const EXTERNAL_APPROVAL_GRANT_STORE_NAMESPACE = "external-approval-grants";
+const EXTERNAL_APPROVAL_GRANT_STORE_MAX_ENTRIES = 5_000;
+
+function openExternalApprovalGrantStore<T>(params: {
+  assertActive: () => void;
+  pluginId: string;
+}): PluginExternalVerificationGrantStore<T> {
+  params.assertActive();
+  const store = createPluginStateSyncKeyedStore<T>(params.pluginId, {
+    namespace: EXTERNAL_APPROVAL_GRANT_STORE_NAMESPACE,
+    maxEntries: EXTERNAL_APPROVAL_GRANT_STORE_MAX_ENTRIES,
+    overflowPolicy: "reject-new",
+  });
+  const withActiveOwner = <R>(operation: () => R): R => {
+    params.assertActive();
+    return operation();
+  };
+  return {
+    registerIfAbsent: (key, value) => withActiveOwner(() => store.registerIfAbsent(key, value)),
+    lookup: (key) => withActiveOwner(() => store.lookup(key)),
+    entries: () => withActiveOwner(() => store.entries()),
+    update: (key, updateValue) => withActiveOwner(() => store.update?.(key, updateValue) ?? false),
+  };
+}
 
 function normalizeLogger(logger: PluginLogger): PluginLogger {
   return {
@@ -140,6 +168,7 @@ export function createPluginApiFactory(
   ): OpenClawPluginApi => {
     const registrationMode = params.registrationMode ?? "full";
     const registrationCapabilities = resolvePluginRegistrationCapabilities(registrationMode);
+    const externalApprovalOwner = {};
     setPluginRuntimeRecord(record);
     const sideEffectGuard = createPluginSideEffectGuard(record.id);
     const isLoadedRecordInRegistry = () =>
@@ -159,6 +188,13 @@ export function createPluginApiFactory(
       !isPluginRegistryRetired(registry) &&
       (isActivatingLoadedRecord() ||
         (isPluginRegistryActivated(registry) && isLoadedRecordInRegistry()));
+    const assertExternalApprovalGrantStoreOwnerActive = () => {
+      if (!sideEffectGuard.active || isPluginRegistryRetired(registry)) {
+        throw new Error(
+          `plugin '${record.id}' external approval grant store owner is no longer active`,
+        );
+      }
+    };
     return buildPluginApi({
       id: record.id,
       name: record.name,
@@ -175,6 +211,42 @@ export function createPluginApiFactory(
       handlers: {
         ...(registrationCapabilities.capabilityHandlers
           ? {
+              ...(registrationMode === "full"
+                ? {
+                    approvals: {
+                      onExternalVerification: (handler) => {
+                        if (
+                          registry.externalApprovalVerifiers.some(
+                            (entry) => entry.pluginId === record.id,
+                          )
+                        ) {
+                          throw new Error(
+                            `plugin '${record.id}' registered more than one external verifier`,
+                          );
+                        }
+                        registry.externalApprovalVerifiers.push({
+                          pluginId: record.id,
+                          pluginName: record.name,
+                          owner: externalApprovalOwner,
+                          handler,
+                          source: record.source,
+                          rootDir: record.rootDir,
+                        });
+                      },
+                      completeExternalVerification: (completion) =>
+                        completeExternalVerificationForPlugin(
+                          externalApprovalOwner,
+                          record.id,
+                          completion,
+                        ),
+                      openGrantStore: () =>
+                        openExternalApprovalGrantStore({
+                          assertActive: assertExternalApprovalGrantStoreOwnerActive,
+                          pluginId: record.id,
+                        }),
+                    },
+                  }
+                : {}),
               registerTool: (tool, opts) => registerTool(record, tool, opts),
               registerHook: (events, handler, opts) =>
                 registerHook(record, events, handler, opts, params.config, params.pluginConfig),

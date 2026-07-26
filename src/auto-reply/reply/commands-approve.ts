@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expectDefined } from "@openclaw/normalization-core";
 // Implements approval commands for pending tool and execution requests.
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
@@ -5,14 +6,18 @@ import {
   getChannelPlugin,
   resolveChannelApprovalCapability,
 } from "../../channels/plugins/index.js";
+import { startExternalVerificationForReviewer } from "../../gateway/plugin-external-verification-runtime.js";
 import { logVerbose } from "../../globals.js";
 import { isApprovalNotFoundError } from "../../infra/approval-errors.js";
 import { resolveApprovalOverGateway } from "../../infra/approval-gateway-resolver.js";
 import { resolveApprovalCommandAuthorization } from "../../infra/channel-approval-auth.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import type { OriginatingChannelType } from "../templating.js";
 import { resolveChannelAccountId } from "./channel-context.js";
 import { requireGatewayClientScope } from "./command-gates.js";
+import { readCommandDeliveryTarget, readCommandMessageThreadId } from "./commands-private-route.js";
 import type { CommandHandler } from "./commands-types.js";
+import { routeReply } from "./route-reply.js";
 
 const COMMAND_REGEX = /^\/?approve(?:\s|$)/i;
 const FOREIGN_COMMAND_MENTION_REGEX = /^\/approve@([^\s]+)(?:\s|$)/i;
@@ -32,6 +37,12 @@ const DECISION_ALIASES: Record<string, "allow-once" | "allow-always" | "deny"> =
 
 type ParsedApproveCommand =
   | { ok: true; id: string; decision: "allow-once" | "allow-always" | "deny" }
+  | {
+      ok: true;
+      id: string;
+      decision: "allow-once" | "allow-always";
+      resolver: "external";
+    }
   | { ok: false; error: string };
 
 const APPROVE_USAGE_TEXT =
@@ -57,6 +68,20 @@ function parseApproveCommand(raw: string): ParsedApproveCommand | null {
 
   const first = normalizeLowercaseStringOrEmpty(tokens[0]);
   const second = normalizeLowercaseStringOrEmpty(tokens[1]);
+  const third = normalizeLowercaseStringOrEmpty(tokens[2]);
+
+  if (
+    tokens.length === 3 &&
+    second === "external" &&
+    (third === "allow-once" || third === "allow-always")
+  ) {
+    return {
+      ok: true,
+      id: expectDefined(tokens[0], "tokens entry at 0"),
+      decision: third,
+      resolver: "external",
+    };
+  }
 
   if (DECISION_ALIASES[first]) {
     return {
@@ -83,6 +108,32 @@ function buildResolvedByLabel(params: Parameters<CommandHandler>[0]): string {
 
 function formatApprovalSubmitError(error: unknown): string {
   return formatErrorMessage(error);
+}
+
+function buildExternalInteractionId(
+  params: Parameters<CommandHandler>[0],
+  accountId: string | undefined,
+): string | null {
+  const messageId =
+    params.ctx.MessageSidFull?.trim() ||
+    params.ctx.MessageSid?.trim() ||
+    params.ctx.MessageSidFirst?.trim() ||
+    params.ctx.MessageSidLast?.trim();
+  if (!messageId) {
+    return null;
+  }
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        params.command.channel,
+        accountId ?? "",
+        params.command.senderId ?? "",
+        readCommandDeliveryTarget(params) ?? "",
+        readCommandMessageThreadId(params) ?? "",
+        messageId,
+      ]),
+    )
+    .digest("hex");
 }
 
 type ApprovalKind = "exec" | "plugin";
@@ -224,6 +275,68 @@ export const handleApproveCommand: CommandHandler = async (params, allowTextComm
         }),
       },
     };
+  }
+
+  if ("resolver" in parsed && parsed.resolver === "external") {
+    if (!methods.includes("plugin")) {
+      return {
+        shouldContinue: false,
+        reply: {
+          text: resolveApprovalAuthorizationError({
+            execAuthorization: execApprovalAuthorization,
+            pluginAuthorization: pluginApprovalAuthorization,
+          }),
+        },
+      };
+    }
+    const interactionId = buildExternalInteractionId(params, effectiveAccountId);
+    const target = readCommandDeliveryTarget(params);
+    if (!interactionId || !target) {
+      return {
+        shouldContinue: false,
+        reply: { text: "❌ External verification requires a stable authenticated message route." },
+      };
+    }
+    try {
+      const attempt = await startExternalVerificationForReviewer({
+        approvalId: parsed.id,
+        decision: parsed.decision,
+        interactionId,
+        reviewerDeviceId: params.ctx.ApprovalReviewerDeviceId,
+        present: async (message) => {
+          const delivery = await routeReply({
+            payload: { text: message },
+            channel: params.command.channel as OriginatingChannelType,
+            to: target,
+            accountId: effectiveAccountId,
+            threadId: readCommandMessageThreadId(params),
+            cfg: params.cfg,
+            sessionKey: params.sessionKey,
+            mirror: false,
+            replyKind: "final",
+          });
+          if (!delivery.ok) {
+            throw new Error("external verification presentation could not be delivered");
+          }
+        },
+      });
+      if (attempt.outcome) {
+        return {
+          shouldContinue: false,
+          reply: {
+            text: `External verification attempt already ${attempt.outcome}. ID: ${attempt.id}`,
+          },
+        };
+      }
+      return { shouldContinue: false };
+    } catch (error) {
+      return {
+        shouldContinue: false,
+        reply: {
+          text: `❌ Failed to start external verification: ${formatApprovalSubmitError(error)}`,
+        },
+      };
+    }
   }
 
   for (const [index, method] of methods.entries()) {

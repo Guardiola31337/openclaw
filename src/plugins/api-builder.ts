@@ -20,6 +20,7 @@ type BuildPluginApiParams = {
   handlers?: Partial<
     Pick<
       OpenClawPluginApi,
+      | "approvals"
       | "registerTool"
       | "registerHook"
       | "registerHttpRoute"
@@ -183,6 +184,15 @@ const noopRegisterMemoryCorpusSupplement: OpenClawPluginApi["registerMemoryCorpu
 const noopRegisterMemoryEmbeddingProvider: OpenClawPluginApi["registerMemoryEmbeddingProvider"] =
   () => {};
 const noopOn: OpenClawPluginApi["on"] = () => {};
+const noopApprovals: OpenClawPluginApi["approvals"] = {
+  onExternalVerification: () => {},
+  completeExternalVerification: async () => {
+    throw new Error("external verification approval runtime is not available");
+  },
+  openGrantStore: () => {
+    throw new Error("external verification grant storage is unavailable during plugin discovery");
+  },
+};
 
 export function buildPluginApi(params: BuildPluginApiParams): OpenClawPluginApi {
   const handlers = params.handlers ?? {};
@@ -199,6 +209,7 @@ export function buildPluginApi(params: BuildPluginApiParams): OpenClawPluginApi 
     pluginConfig: params.pluginConfig,
     runtime: params.runtime,
     logger: params.logger,
+    approvals: handlers.approvals ?? noopApprovals,
     registerTool: handlers.registerTool ?? noopRegisterTool,
     registerHook: handlers.registerHook ?? noopRegisterHook,
     registerHttpRoute: handlers.registerHttpRoute ?? noopRegisterHttpRoute,
