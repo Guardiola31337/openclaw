@@ -3056,9 +3056,16 @@ INSERT INTO macos_port_guardian_records VALUES (4242, 18789, '/usr/bin/ssh', 're
         )
         .get() as { sql: string }
     ).sql;
+    // This fixture models the shipped two-kind schema, which predates external
+    // verification attempts and their operator-approval trigger.
+    legacyDb.exec(`
+      DROP TRIGGER trg_operator_approval_closes_external_verification;
+      DROP TABLE plugin_external_verification_attempts;
+    `);
     legacyDb.exec("ALTER TABLE operator_approvals RENAME TO operator_approvals_current");
     legacyDb.exec(currentSql.replace("'exec', 'plugin', 'system-agent'", "'exec', 'plugin'"));
     legacyDb.exec("DROP TABLE operator_approvals_current");
+    markStateDatabaseAsV5(legacyDb);
     legacyDb.close();
 
     expect(detectOpenClawStateDatabaseSchemaMigrations(options)).toContainEqual({
@@ -3066,10 +3073,7 @@ INSERT INTO macos_port_guardian_records VALUES (4242, 18789, '/usr/bin/ssh', 're
       path: databasePath,
     });
     expect(repairOpenClawStateDatabaseSchema(options)).toEqual({
-      changes: [
-        "Migrated shared state operator approvals → OpenClaw system changes",
-        expect.stringMatching(/^Rebuilt canonical shared-state SQLite indexes \(\d+\)$/u),
-      ],
+      changes: ["Migrated shared state operator approvals → OpenClaw system changes"],
       warnings: [],
     });
 
@@ -3078,6 +3082,13 @@ INSERT INTO macos_port_guardian_records VALUES (4242, 18789, '/usr/bin/ssh', 're
       .prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'operator_approvals'")
       .get() as { sql: string };
     expect(migratedSql.sql).toContain("'system-agent'");
+    expect(
+      reopened.db
+        .prepare(
+          "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'plugin_external_verification_attempts'",
+        )
+        .get(),
+    ).toEqual({ name: "plugin_external_verification_attempts" });
   });
 
   it("does not recursively recommend doctor when operator approval repair refuses a shape", () => {
