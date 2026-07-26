@@ -295,16 +295,18 @@ export class PluginExternalVerificationRuntime {
       // Setup failure is already durable. Replay must return that terminal
       // attempt instead of rethrowing the first delivery's transient error.
       await setup?.promise.catch(() => undefined);
-      const presentations =
-        setup?.presentations ?? this.liveAttempts.get(attemptSnapshot.id)?.presentations ?? [];
-      for (const presentation of presentations) {
-        await params.present(presentation);
-      }
       const current = getExternalVerificationAttemptSnapshot({
         attemptId: attemptSnapshot.id,
         pluginId: attemptSnapshot.context.pluginId,
         databaseOptions: this.params.databaseOptions,
       });
+      const presentations =
+        setup?.presentations ?? this.liveAttempts.get(attemptSnapshot.id)?.presentations ?? [];
+      if (!(current ?? attemptSnapshot).outcome) {
+        for (const presentation of presentations) {
+          await params.present(presentation);
+        }
+      }
       return {
         outcome: started.outcome,
         attempt: current ? snapshotAttemptWithRecord(current, record) : attemptSnapshot,

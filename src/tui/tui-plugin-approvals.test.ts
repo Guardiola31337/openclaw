@@ -360,7 +360,7 @@ describe("TUI plugin approvals", () => {
 
   it("keeps fail-closed choices visible above a terminal QR at 80x24", async () => {
     const harness = createHarness();
-    const qrLines = Array.from({ length: 20 }, (_, index) => ` QR row ${index + 1} `);
+    const qrLines = Array.from({ length: 200 }, (_, index) => ` QR row ${index + 1} `);
     harness.startExternalPluginApproval.mockResolvedValueOnce({
       outcome: "started",
       presentations: [
@@ -408,6 +408,8 @@ describe("TUI plugin approvals", () => {
     expect(rendered.indexOf("Verify once")).toBeLessThan(rendered.indexOf("QR row 1"));
     expect(rendered).toContain("Deny");
     expect(rendered).toContain("QR row 20");
+    expect(rendered).not.toContain("QR row 21");
+    expect(rendered).not.toContain("QR row 200");
     expect(rendered).not.toContain("worldapp://verify/example");
   });
 

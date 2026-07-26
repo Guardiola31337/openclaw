@@ -28,6 +28,7 @@ type ApprovalSelector = Component & {
 const APPROVAL_BIDI_CONTROL_RE = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 const FENCED_PRESENTATION_RE = /(?:^|\n)(```|~~~)[^\n]*\n([\s\S]*?)\n\1(?=\n|$)/g;
 const MAX_COMPACT_PRESENTATION_CHARS = 480;
+const MAX_COMPACT_PRESENTATION_ROWS = 21;
 const TERMINAL_BLACK_ON_WHITE = "\x1b[47m\x1b[30m";
 const TERMINAL_RESET = "\x1b[0m";
 
@@ -126,7 +127,7 @@ class PluginApprovalPrompt implements Component {
   }
 
   render(width: number): string[] {
-    const challenge = this.challenge.render(width);
+    const challenge = this.challenge.render(width).slice(0, MAX_COMPACT_PRESENTATION_ROWS);
     const confirmation = this.confirmation.render(width);
     const selector = this.selector.render(width);
     if (challenge.some((line) => line.trim())) {

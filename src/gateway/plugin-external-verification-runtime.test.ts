@@ -425,7 +425,7 @@ describe("PluginExternalVerificationRuntime", () => {
       terminalSource: "verifier-error",
     });
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(replayPresent).toHaveBeenCalledWith("Verify this request.");
+    expect(replayPresent).not.toHaveBeenCalled();
   });
 
   it("durably fails an attempt when verifier lookup throws", async () => {
