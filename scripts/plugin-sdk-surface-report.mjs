@@ -106,7 +106,8 @@ const defaultPublicDeprecatedExportsByEntrypointBudget = Object.freeze({
   "channel-reply-pipeline": 12,
   "interactive-runtime": 11,
   // +3: canonical incognito classifier projected through deprecated compatibility barrels.
-  "infra-runtime": 596,
+  // +2: external verification contracts projected through this compatibility barrel.
+  "infra-runtime": 598,
   "ssrf-policy": 1,
   "ssrf-runtime": 1,
   // +1: deprecated agent media projection re-export during the media migration window.
@@ -182,7 +183,8 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       // +1: shared plugin SecretRef setup plan helper.
       // +1: shared multi-claim ingress lifecycle fan-in.
       // +3: channel prompt-context entry/compat types and channel metadata builder.
-      4727,
+      // +8: plugin-owned external verification approval API and contracts.
+      4735,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -208,7 +210,8 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       // +1: native approval messaging target resolver.
       // +1: shared multi-claim ingress lifecycle fan-in.
       // +1: channel metadata builder.
-      2863,
+      // +1: plugin-owned external verification handler contract.
+      2864,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
@@ -217,7 +220,8 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       // +2: shipped Slack and Discord setup compatibility helpers.
       // +10: named media legacy projection deprecations across public compatibility barrels.
       // +2: channel prompt-context type and metadata builder compatibility aliases.
-      1700,
+      // +2: external verification contracts projected through compatibility barrels.
+      1702,
       env,
     ),
     publicWildcardReexports: readPluginSdkSurfaceBudgetEnv(

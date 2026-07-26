@@ -10,6 +10,7 @@ import { copyReplyPayloadMetadata, type ReplyPayload } from "../auto-reply/reply
 import { formatHookErrorForLog } from "../hooks/fire-and-forget.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { concatOptionalTextSegments } from "../shared/text/join-segments.js";
+import type { PluginHostBeforeToolCallResult } from "./hook-before-tool-call-result.js";
 import {
   type GateHookResult,
   type InputGateDecision,
@@ -50,7 +51,6 @@ import type {
   PluginHookLlmOutputEvent,
   PluginHookBeforeResetEvent,
   PluginHookBeforeToolCallEvent,
-  PluginHookBeforeToolCallResult,
   PluginAgentTurnPrepareEvent,
   PluginAgentTurnPrepareResult,
   PluginHeartbeatPromptContributionEvent,
@@ -1178,8 +1178,8 @@ export function createHookRunner(
   async function runBeforeToolCall(
     event: PluginHookBeforeToolCallEvent,
     ctx: PluginHookToolContext,
-  ): Promise<PluginHookBeforeToolCallResult | undefined> {
-    return runModifyingHook<"before_tool_call", PluginHookBeforeToolCallResult>(
+  ): Promise<PluginHostBeforeToolCallResult | undefined> {
+    return runModifyingHook<"before_tool_call", PluginHostBeforeToolCallResult>(
       "before_tool_call",
       event,
       ctx,

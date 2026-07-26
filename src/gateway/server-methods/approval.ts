@@ -59,7 +59,7 @@ type CreateApprovalHandlersParams = {
   databaseOptions?: OpenClawStateDatabaseOptions;
 };
 
-function buildApprovalSnapshot(
+export function buildApprovalSnapshot(
   record: OperatorApprovalRecord,
   controlUiBasePath: string,
 ): ApprovalSnapshot | null {

@@ -34,7 +34,7 @@ function getOperatorApproval(params: Parameters<typeof getOperatorApprovalDetail
   const result = getOperatorApprovalDetailed(params);
   return result.outcome === "found" ? result.record : null;
 }
-import { cancelRunBoundExecApprovals } from "./approval-run-cancellation.js";
+import { cancelRunBoundApprovals } from "./approval-run-cancellation.js";
 import { createApprovalHandlers } from "./approval.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
@@ -653,18 +653,28 @@ describe("unified approval handlers", () => {
       id: "completed-run-approval",
       request: { runId: "run-completed", toolCallId: "tool-completed" },
     });
+    const plugin = registerPlugin(managers.plugin, {
+      id: "aborted-run-plugin-approval",
+      request: { runId: "run-active", toolCallId: "plugin-tool-active" },
+    });
     const context = createContext();
 
     expect(
-      cancelRunBoundExecApprovals({
+      cancelRunBoundApprovals({
         runId: "run-active",
-        manager: managers.exec,
+        execManager: managers.exec,
+        pluginManager: managers.plugin,
         context,
       }),
-    ).toBe(1);
+    ).toBe(2);
 
     await expect(aborted.decision).resolves.toBeNull();
+    await expect(plugin.decision).resolves.toBeNull();
     expect(managers.exec.getSnapshot(aborted.record.id)).toMatchObject({
+      status: "cancelled",
+      terminalReason: "run-aborted",
+    });
+    expect(managers.plugin.getSnapshot(plugin.record.id)).toMatchObject({
       status: "cancelled",
       terminalReason: "run-aborted",
     });

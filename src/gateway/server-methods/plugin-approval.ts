@@ -15,7 +15,10 @@ import type {
   PluginApprovalRequestPayload,
   PluginApprovalResolved,
 } from "../../infra/plugin-approvals.js";
-import { resolvePluginApprovalTimeoutMs } from "../../infra/plugin-approvals.js";
+import {
+  normalizePluginExternalResolution,
+  resolvePluginApprovalTimeoutMs,
+} from "../../infra/plugin-approvals.js";
 import type { ExecApprovalManager } from "../exec-approval-manager.js";
 import { runApprovalRequestDeliveries } from "./approval-request-delivery.js";
 import {
@@ -52,7 +55,20 @@ export function createPluginApprovalHandlers(
       respond(true, listVisiblePendingApprovalRequests({ manager, client }), undefined);
     },
     "plugin.approval.request": async ({ params, client, respond, context }) => {
-      if (!validatePluginApprovalRequestParams(params)) {
+      const internalRequest =
+        client?.internal?.approvalRuntime === true &&
+        typeof params === "object" &&
+        params !== null &&
+        !Array.isArray(params);
+      const rawParams = internalRequest ? (params as Record<string, unknown>) : null;
+      const publicParams = rawParams
+        ? Object.fromEntries(
+            Object.entries(rawParams).filter(
+              ([key]) => key !== "externalResolution" && key !== "runId" && key !== "sessionId",
+            ),
+          )
+        : params;
+      if (!validatePluginApprovalRequestParams(publicParams)) {
         respond(
           false,
           undefined,
@@ -65,7 +81,7 @@ export function createPluginApprovalHandlers(
         );
         return;
       }
-      const p = params as {
+      const p = publicParams as {
         pluginId?: string | null;
         title: string;
         description: string;
@@ -84,6 +100,64 @@ export function createPluginApprovalHandlers(
         timeoutMs?: number;
         twoPhase?: boolean;
       };
+      let externalResolution: PluginApprovalRequestPayload["externalResolution"];
+      try {
+        externalResolution = internalRequest
+          ? normalizePluginExternalResolution(
+              rawParams?.externalResolution as PluginApprovalRequestPayload["externalResolution"],
+            )
+          : null;
+      } catch (error) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, `invalid external verification: ${String(error)}`),
+        );
+        return;
+      }
+      const runId = internalRequest
+        ? normalizeOptionalString(rawParams?.runId as string | undefined)
+        : null;
+      const pluginId = normalizeOptionalString(p.pluginId ?? undefined);
+      const toolName = normalizeOptionalString(p.toolName ?? undefined);
+      if (externalResolution && !runId) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            "external verification requires a host-derived run id",
+          ),
+        );
+        return;
+      }
+      if (externalResolution && (!pluginId || !toolName)) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            "external verification requires host-derived plugin and tool ownership",
+          ),
+        );
+        return;
+      }
+      if (
+        externalResolution &&
+        p.allowedDecisions?.some(
+          (decision) => decision === "allow-once" || decision === "allow-always",
+        )
+      ) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            "generic and external allow decisions cannot overlap",
+          ),
+        );
+        return;
+      }
       const twoPhase = p.twoPhase === true;
       const timeoutMs = resolvePluginApprovalTimeoutMs(p.timeoutMs);
 
@@ -91,27 +165,46 @@ export function createPluginApprovalHandlers(
         normalizeOptionalString(value) || null;
 
       const request: PluginApprovalRequestPayload = {
-        pluginId: p.pluginId ?? null,
+        pluginId: pluginId ?? null,
         title: p.title,
         description: p.description,
         detail: normalizeTrimmedString(p.detail),
         severity: (p.severity as PluginApprovalRequestPayload["severity"]) ?? null,
-        toolName: p.toolName ?? null,
+        toolName: toolName ?? null,
         toolCallId: p.toolCallId ?? null,
+        ...(externalResolution ? { externalResolution } : {}),
         ...(Array.isArray(p.allowedDecisions)
           ? {
               allowedDecisions: resolveCanonicalPluginApprovalRequestAllowedDecisions({
                 allowedDecisions: p.allowedDecisions,
+                externalResolution,
               }),
             }
           : {}),
         agentId: p.agentId ?? null,
         sessionKey: p.sessionKey ?? null,
+        sessionId: internalRequest
+          ? normalizeOptionalString(rawParams?.sessionId as string | undefined)
+          : null,
+        runId,
         turnSourceChannel: normalizeTrimmedString(p.turnSourceChannel),
         turnSourceTo: normalizeTrimmedString(p.turnSourceTo),
         turnSourceAccountId: normalizeTrimmedString(p.turnSourceAccountId),
         turnSourceThreadId: p.turnSourceThreadId ?? null,
       };
+
+      // The abort owner records its tombstone before sweeping approvals. Keep
+      // this check adjacent to creation so an already-aborted run cannot park.
+      if (runId && context.chatRunState.hasAbortMarker(runId)) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "approval run already aborted", {
+            details: { reason: "PLUGIN_APPROVAL_RUN_ABORTED" },
+          }),
+        );
+        return;
+      }
 
       // Always server-generate the ID — never accept plugin-provided IDs.
       // Kind-prefix so /approve routing can distinguish plugin vs exec IDs deterministically.

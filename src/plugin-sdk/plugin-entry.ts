@@ -43,6 +43,12 @@ import type {
   PluginCommandContext as _PluginCommandContext,
   PluginCommandResult as _PluginCommandResult,
   PluginControlUiDescriptor as _PluginControlUiDescriptor,
+  PluginExternalResolution as _PluginExternalResolution,
+  PluginExternalVerificationContext as _PluginExternalVerificationContext,
+  PluginExternalVerificationAttempt as _PluginExternalVerificationAttempt,
+  PluginExternalVerificationCompletionResult as _PluginExternalVerificationCompletionResult,
+  PluginExternalVerificationGrantAuthorization as _PluginExternalVerificationGrantAuthorization,
+  PluginExternalVerificationGrantStore as _PluginExternalVerificationGrantStore,
   PluginHeartbeatPromptContributionEvent as _PluginHeartbeatPromptContributionEvent,
   PluginHeartbeatPromptContributionResult as _PluginHeartbeatPromptContributionResult,
   PluginJsonValue as _PluginJsonValue,
@@ -179,6 +185,14 @@ export type PluginAgentTurnPrepareResult = _PluginAgentTurnPrepareResult;
 export type PluginCommandContext = _PluginCommandContext;
 export type PluginCommandResult = _PluginCommandResult;
 export type PluginControlUiDescriptor = _PluginControlUiDescriptor;
+export type PluginExternalResolution = _PluginExternalResolution;
+export type PluginExternalVerificationContext = _PluginExternalVerificationContext;
+export type PluginExternalVerificationAttempt = _PluginExternalVerificationAttempt;
+export type PluginExternalVerificationCompletionResult =
+  _PluginExternalVerificationCompletionResult;
+export type PluginExternalVerificationGrantAuthorization =
+  _PluginExternalVerificationGrantAuthorization;
+export type PluginExternalVerificationGrantStore<T> = _PluginExternalVerificationGrantStore<T>;
 export type PluginHeartbeatPromptContributionEvent = _PluginHeartbeatPromptContributionEvent;
 export type PluginHeartbeatPromptContributionResult = _PluginHeartbeatPromptContributionResult;
 export type PluginJsonValue = _PluginJsonValue;

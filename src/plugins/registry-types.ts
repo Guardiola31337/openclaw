@@ -12,6 +12,7 @@ import type { CodexAppServerExtensionFactory } from "./codex-app-server-extensio
 import type { PluginCompatCode } from "./compat/registry.js";
 import type { PluginActivationSource } from "./config-state.js";
 import type { EmbeddingProviderAdapter } from "./embedding-providers.js";
+import type { PluginExternalVerificationHandler } from "./external-verification-approval-types.js";
 import type {
   PluginAgentEventSubscriptionRegistration,
   PluginControlUiDescriptor,
@@ -411,6 +412,15 @@ type PluginConversationBindingResolvedHandlerRegistration = {
   rootDir?: string;
 };
 
+export type PluginExternalApprovalVerifierRegistration = {
+  pluginId: string;
+  pluginName?: string;
+  owner: object;
+  handler: PluginExternalVerificationHandler;
+  source: string;
+  rootDir?: string;
+};
+
 export type PluginRecord = {
   id: string;
   name: string;
@@ -530,6 +540,7 @@ export type PluginRegistry = {
   sessionSchedulerJobs: PluginSessionSchedulerJobRegistryRegistration[];
   sessionActions: PluginSessionActionRegistryRegistration[];
   conversationBindingResolvedHandlers: PluginConversationBindingResolvedHandlerRegistration[];
+  externalApprovalVerifiers: PluginExternalApprovalVerifierRegistration[];
   diagnostics: PluginDiagnostic[];
 };
 
