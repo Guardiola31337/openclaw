@@ -8,6 +8,8 @@ export const GATEWAY_AUX_METHODS = [
   "exec.approval.waitDecision",
   "exec.approval.resolve",
   "plugin.approval.list",
+  "plugin.approval.external.prepare",
+  "plugin.approval.external.start",
   "plugin.approval.request",
   "plugin.approval.waitDecision",
   "plugin.approval.resolve",

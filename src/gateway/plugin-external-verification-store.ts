@@ -1,6 +1,6 @@
 // Durable, proof-free attempt ledger and atomic external approval completion.
 import { createHash, randomUUID } from "node:crypto";
-import type { Selectable } from "kysely";
+import { sql, type Selectable } from "kysely";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -29,20 +29,40 @@ type ExternalVerificationDatabase = Pick<
   "operator_approvals" | "plugin_external_verification_attempts"
 >;
 
+type ExternalVerificationUnavailableOutcome =
+  | "approval-expired"
+  | "approval-not-found"
+  | "approval-not-pending"
+  | "decision-unavailable"
+  | "owner-unavailable"
+  | "reviewer-unauthorized"
+  | "run-unavailable";
+
+type NativeExternalVerificationAction = {
+  intent: "start" | "retry";
+  expectedAttemptId: string | null;
+};
+
 type StartExternalVerificationResult =
   | {
       outcome: "started" | "replay";
       attempt: PluginExternalVerificationAttemptSnapshot;
     }
   | {
-      outcome:
-        | "approval-expired"
-        | "approval-not-found"
-        | "approval-not-pending"
-        | "decision-unavailable"
-        | "owner-unavailable"
-        | "reviewer-unauthorized"
-        | "run-unavailable";
+      outcome: "stale-action";
+      attempt?: PluginExternalVerificationAttemptSnapshot;
+    }
+  | {
+      outcome: ExternalVerificationUnavailableOutcome;
+    };
+
+export type ExternalVerificationNativeActionState =
+  | {
+      outcome: "ready";
+      action: NativeExternalVerificationAction;
+    }
+  | {
+      outcome: ExternalVerificationUnavailableOutcome;
     };
 
 type CompleteExternalVerificationStoreResult =
@@ -148,6 +168,13 @@ function decodeAttempt(row: ExternalAttemptRow): PluginExternalVerificationAttem
   };
 }
 
+function decodeAttemptForDecision(
+  row: ExternalAttemptRow | undefined,
+  decision: "allow-once" | "allow-always",
+): PluginExternalVerificationAttemptSnapshot | undefined {
+  return row?.decision === decision ? decodeAttempt(row) : undefined;
+}
+
 function buildGrantAuthorization(
   row: ExternalAttemptRow,
 ): PluginExternalVerificationGrantAuthorization | undefined {
@@ -195,12 +222,165 @@ function selectAttempt(
   );
 }
 
+function selectLatestAttempt(
+  database: OpenClawStateDatabase,
+  approvalId: string,
+): ExternalAttemptRow | undefined {
+  const stateDb = getNodeSqliteKysely<ExternalVerificationDatabase>(database.db);
+  return executeSqliteQueryTakeFirstSync(
+    database.db,
+    stateDb
+      .selectFrom("plugin_external_verification_attempts")
+      .selectAll()
+      .where("approval_id", "=", approvalId)
+      .orderBy(sql<number>`rowid`, "desc"),
+  );
+}
+
+function selectActiveAttempt(
+  database: OpenClawStateDatabase,
+  approvalId: string,
+): ExternalAttemptRow | undefined {
+  const stateDb = getNodeSqliteKysely<ExternalVerificationDatabase>(database.db);
+  return executeSqliteQueryTakeFirstSync(
+    database.db,
+    stateDb
+      .selectFrom("plugin_external_verification_attempts")
+      .selectAll()
+      .where("approval_id", "=", approvalId)
+      .where("ended_at_ms", "is", null),
+  );
+}
+
+function selectExternalApproval(params: {
+  database: OpenClawStateDatabase;
+  approvalId: string;
+  reviewerDeviceId?: string;
+  runtimeEpoch: string;
+}):
+  | { outcome: "ready"; approval: OperatorApprovalRow }
+  | { outcome: "approval-not-found" | "reviewer-unauthorized" } {
+  const stateDb = getNodeSqliteKysely<ExternalVerificationDatabase>(params.database.db);
+  const approval = executeSqliteQueryTakeFirstSync(
+    params.database.db,
+    stateDb
+      .selectFrom("operator_approvals")
+      .selectAll()
+      .where("approval_id", "=", params.approvalId),
+  );
+  if (!approval || approval.kind !== "plugin" || approval.runtime_epoch !== params.runtimeEpoch) {
+    return { outcome: "approval-not-found" };
+  }
+  const reviewerDeviceIds = readReviewerDeviceIds(approval);
+  if (
+    !reviewerDeviceIds ||
+    !isOperatorApprovalReviewerAuthorized({
+      reviewerDeviceId: params.reviewerDeviceId,
+      reviewerDeviceIds,
+    })
+  ) {
+    return { outcome: "reviewer-unauthorized" };
+  }
+  return { outcome: "ready", approval };
+}
+
+function validatePendingExternalApproval(params: {
+  database: OpenClawStateDatabase;
+  approval: OperatorApprovalRow;
+  decision: "allow-once" | "allow-always";
+  nowMs: number;
+}):
+  | {
+      outcome: "ready";
+      external: ExternalResolutionProjection;
+      pluginId: string;
+      runId: string;
+      toolName: string;
+    }
+  | { outcome: Exclude<ExternalVerificationUnavailableOutcome, "reviewer-unauthorized"> } {
+  const { approval } = params;
+  if (approval.status !== "pending") {
+    return { outcome: "approval-not-pending" };
+  }
+  if (approval.expires_at_ms <= params.nowMs) {
+    return { outcome: "approval-expired" };
+  }
+  const external = readExternalResolution(approval);
+  if (!external?.decisions.includes(params.decision)) {
+    return { outcome: "decision-unavailable" };
+  }
+  const pluginId = (() => {
+    try {
+      const presentation = JSON.parse(approval.presentation_json) as {
+        pluginId?: unknown;
+      };
+      return typeof presentation.pluginId === "string" ? presentation.pluginId.trim() : "";
+    } catch {
+      return "";
+    }
+  })();
+  if (!pluginId) {
+    return { outcome: "owner-unavailable" };
+  }
+  const runId = approval.source_run_id?.trim() ?? "";
+  if (!runId) {
+    return { outcome: "run-unavailable" };
+  }
+  const toolName = approval.source_tool_name?.trim() ?? "";
+  if (!toolName) {
+    return { outcome: "approval-not-found" };
+  }
+  return { outcome: "ready", external, pluginId, runId, toolName };
+}
+
+/** Read the exact attempt generation a native approval action must bind. */
+export function getExternalVerificationNativeActionState(params: {
+  approvalId: string;
+  decision: "allow-once" | "allow-always";
+  reviewerDeviceId?: string;
+  runtimeEpoch: string;
+  nowMs?: number;
+  databaseOptions?: OpenClawStateDatabaseOptions;
+}): ExternalVerificationNativeActionState {
+  return runOpenClawStateWriteTransaction((database) => {
+    const selected = selectExternalApproval({ database, ...params });
+    if (selected.outcome !== "ready") {
+      return selected;
+    }
+    const validated = validatePendingExternalApproval({
+      database,
+      approval: selected.approval,
+      decision: params.decision,
+      nowMs: params.nowMs ?? Date.now(),
+    });
+    if (validated.outcome !== "ready") {
+      return validated;
+    }
+    const active = selectActiveAttempt(database, selected.approval.approval_id);
+    if (active) {
+      return {
+        outcome: "ready",
+        action: { intent: "retry", expectedAttemptId: active.attempt_id },
+      };
+    }
+    return {
+      outcome: "ready",
+      action: {
+        intent: "start",
+        expectedAttemptId:
+          selectLatestAttempt(database, selected.approval.approval_id)?.attempt_id ?? null,
+      },
+    };
+  }, params.databaseOptions);
+}
+
 /** Start or replay one reviewer interaction, replacing only an active prior attempt. */
 export function startExternalVerificationAttempt(params: {
   approvalId: string;
   decision: "allow-once" | "allow-always";
   interactionId: string;
   reviewerDeviceId?: string;
+  nativeAction?: NativeExternalVerificationAction;
   runtimeEpoch: string;
   nowMs?: number;
   databaseOptions?: OpenClawStateDatabaseOptions;
@@ -210,27 +390,12 @@ export function startExternalVerificationAttempt(params: {
     // Decision is part of the idempotency key: each authenticated interaction/decision
     // pair starts once, so stale redelivery cannot revive superseded reviewer intent.
     const interactionId = bindInteractionIdToDecision(params.interactionId, params.decision);
+    const selected = selectExternalApproval({ database, ...params });
+    if (selected.outcome !== "ready") {
+      return selected;
+    }
+    const approval = selected.approval;
     const stateDb = getNodeSqliteKysely<ExternalVerificationDatabase>(database.db);
-    const approval = executeSqliteQueryTakeFirstSync(
-      database.db,
-      stateDb
-        .selectFrom("operator_approvals")
-        .selectAll()
-        .where("approval_id", "=", params.approvalId),
-    );
-    if (!approval || approval.kind !== "plugin" || approval.runtime_epoch !== params.runtimeEpoch) {
-      return { outcome: "approval-not-found" };
-    }
-    const reviewerDeviceIds = readReviewerDeviceIds(approval);
-    if (
-      !reviewerDeviceIds ||
-      !isOperatorApprovalReviewerAuthorized({
-        reviewerDeviceId: params.reviewerDeviceId,
-        reviewerDeviceIds,
-      })
-    ) {
-      return { outcome: "reviewer-unauthorized" };
-    }
     // The manager owns terminal lifecycle publication and in-memory cancellation.
     // Report due state before replay so the runtime can expire through that owner.
     if (approval.status === "pending" && approval.expires_at_ms <= nowMs) {
@@ -245,35 +410,45 @@ export function startExternalVerificationAttempt(params: {
         .where("interaction_id", "=", interactionId),
     );
     if (replay) {
+      if (params.nativeAction) {
+        const latest = selectLatestAttempt(database, approval.approval_id);
+        if (latest?.attempt_id !== replay.attempt_id) {
+          const attempt = decodeAttemptForDecision(latest, params.decision);
+          return {
+            outcome: "stale-action",
+            ...(attempt ? { attempt } : {}),
+          };
+        }
+      }
       return { outcome: "replay", attempt: decodeAttempt(replay) };
     }
-    if (approval.status !== "pending") {
-      return { outcome: "approval-not-pending" };
+    const validated = validatePendingExternalApproval({
+      database,
+      approval,
+      decision: params.decision,
+      nowMs,
+    });
+    if (validated.outcome !== "ready") {
+      return validated;
     }
-    const external = readExternalResolution(approval);
-    if (!external?.decisions.includes(params.decision)) {
-      return { outcome: "decision-unavailable" };
-    }
-    const pluginId = (() => {
-      try {
-        const presentation = JSON.parse(approval.presentation_json) as {
-          pluginId?: unknown;
+    if (params.nativeAction) {
+      const active = selectActiveAttempt(database, approval.approval_id);
+      const latest = selectLatestAttempt(database, approval.approval_id);
+      const actionMatches =
+        params.nativeAction.intent === "retry"
+          ? Boolean(
+              active &&
+              latest?.attempt_id === active.attempt_id &&
+              active.attempt_id === params.nativeAction.expectedAttemptId,
+            )
+          : !active && (latest?.attempt_id ?? null) === params.nativeAction.expectedAttemptId;
+      if (!actionMatches) {
+        const attempt = decodeAttemptForDecision(latest, params.decision);
+        return {
+          outcome: "stale-action",
+          ...(attempt ? { attempt } : {}),
         };
-        return typeof presentation.pluginId === "string" ? presentation.pluginId.trim() : "";
-      } catch {
-        return "";
       }
-    })();
-    if (!pluginId) {
-      return { outcome: "owner-unavailable" };
-    }
-    const runId = approval.source_run_id?.trim() ?? "";
-    if (!runId) {
-      return { outcome: "run-unavailable" };
-    }
-    const toolName = approval.source_tool_name?.trim() ?? "";
-    if (!toolName) {
-      return { outcome: "approval-not-found" };
     }
     executeSqliteQuerySync(
       database.db,
@@ -294,16 +469,16 @@ export function startExternalVerificationAttempt(params: {
       stateDb.insertInto("plugin_external_verification_attempts").values({
         attempt_id: attemptId,
         approval_id: approval.approval_id,
-        plugin_id: pluginId,
-        run_id: runId,
-        tool_name: toolName,
+        plugin_id: validated.pluginId,
+        run_id: validated.runId,
+        tool_name: validated.toolName,
         tool_call_id: approval.source_tool_call_id,
         agent_id: approval.source_agent_id,
         session_key: approval.source_session_key,
         session_id: approval.source_session_id,
         interaction_id: interactionId,
         decision: params.decision,
-        label: external.label,
+        label: validated.external.label,
         created_at_ms: nowMs,
         expires_at_ms: approval.expires_at_ms,
         ended_at_ms: null,

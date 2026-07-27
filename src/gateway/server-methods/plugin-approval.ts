@@ -5,9 +5,12 @@ import {
   ErrorCodes,
   errorShape,
   formatValidationErrors,
+  validatePluginApprovalExternalPrepareParams,
+  validatePluginApprovalExternalStartParams,
   validatePluginApprovalRequestParams,
   validatePluginApprovalResolveParams,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { formatErrorMessage } from "../../infra/errors.js";
 import type { ExecApprovalForwarder } from "../../infra/exec-approval-forwarder.js";
 import { resolveCanonicalPluginApprovalRequestAllowedDecisions } from "../../infra/plugin-approval-canonical-decisions.js";
 import type {
@@ -20,6 +23,8 @@ import {
   resolvePluginApprovalTimeoutMs,
 } from "../../infra/plugin-approvals.js";
 import type { ExecApprovalManager } from "../exec-approval-manager.js";
+import { canReviewOperatorApproval } from "../operator-approval-authorization.js";
+import type { PluginExternalVerificationRuntime } from "../plugin-external-verification-runtime.js";
 import { runApprovalRequestDeliveries } from "./approval-request-delivery.js";
 import {
   bindApprovalRequesterMetadata,
@@ -48,11 +53,123 @@ type PluginApprovalIosPushDelivery = {
 /** Create plugin approval handlers backed by the shared approval manager. */
 export function createPluginApprovalHandlers(
   manager: ExecApprovalManager<PluginApprovalRequestPayload>,
-  opts?: { forwarder?: ExecApprovalForwarder; iosPushDelivery?: PluginApprovalIosPushDelivery },
+  opts?: {
+    forwarder?: ExecApprovalForwarder;
+    iosPushDelivery?: PluginApprovalIosPushDelivery;
+    externalVerificationRuntime?: PluginExternalVerificationRuntime;
+  },
 ): GatewayRequestHandlers {
   return {
     "plugin.approval.list": async ({ respond, client }) => {
       respond(true, listVisiblePendingApprovalRequests({ manager, client }), undefined);
+    },
+    "plugin.approval.external.prepare": async ({ params, respond, client }) => {
+      if (!validatePluginApprovalExternalPrepareParams(params)) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            `invalid plugin.approval.external.prepare params: ${formatValidationErrors(
+              validatePluginApprovalExternalPrepareParams.errors,
+            )}`,
+          ),
+        );
+        return;
+      }
+      if (!canReviewOperatorApproval(client)) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.FORBIDDEN,
+            "external verification actions require an authorized approval reviewer",
+          ),
+        );
+        return;
+      }
+      const p = params as {
+        id: string;
+        decision: "allow-once" | "allow-always";
+      };
+      try {
+        const prepared = opts?.externalVerificationRuntime?.prepareNativeAction({
+          approvalId: p.id,
+          decision: p.decision,
+          reviewerDeviceId: client?.connect.device?.id,
+        });
+        if (!prepared) {
+          throw new Error("external verification approval runtime is not available");
+        }
+        respond(true, { intent: prepared.intent, actionToken: prepared.token }, undefined);
+      } catch (error) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, formatErrorMessage(error)),
+        );
+      }
+    },
+    "plugin.approval.external.start": async ({ params, respond, client }) => {
+      if (!validatePluginApprovalExternalStartParams(params)) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            `invalid plugin.approval.external.start params: ${formatValidationErrors(
+              validatePluginApprovalExternalStartParams.errors,
+            )}`,
+          ),
+        );
+        return;
+      }
+      if (!canReviewOperatorApproval(client)) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.FORBIDDEN,
+            "external verification actions require an authorized approval reviewer",
+          ),
+        );
+        return;
+      }
+      const p = params as {
+        id: string;
+        decision: "allow-once" | "allow-always";
+        actionToken: string;
+      };
+      try {
+        const dispatched = await opts?.externalVerificationRuntime?.dispatchNativeAction({
+          approvalId: p.id,
+          decision: p.decision,
+          reviewerDeviceId: client?.connect.device?.id,
+          token: p.actionToken,
+        });
+        if (!dispatched) {
+          throw new Error("external verification approval runtime is not available");
+        }
+        const attemptOutcome = dispatched.attempt?.outcome;
+        if (
+          attemptOutcome === "failed" ||
+          attemptOutcome === "cancelled" ||
+          attemptOutcome === "timed-out"
+        ) {
+          throw new Error(`external verification attempt ${attemptOutcome}`);
+        }
+        respond(
+          true,
+          { outcome: dispatched.outcome, presentations: dispatched.presentations },
+          undefined,
+        );
+      } catch (error) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, formatErrorMessage(error)),
+        );
+      }
     },
     "plugin.approval.request": async ({ params, client, respond, context }) => {
       const internalRequest =

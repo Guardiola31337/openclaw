@@ -245,6 +245,250 @@ describe("PluginExternalVerificationRuntime", () => {
     await expect(decision).resolves.toBeNull();
   });
 
+  it("issues stable native action generations and rejects stale retry replacement", async () => {
+    const handler = vi.fn(async (attempt: PluginExternalVerificationAttempt) => {
+      await attempt.present({ message: `Verify attempt ${attempt.id}.` });
+    });
+    createHarness(handler);
+
+    const firstAction = runtime!.prepareNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+    });
+    expect(
+      runtime!.prepareNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+      }),
+    ).toEqual(firstAction);
+    expect(firstAction.intent).toBe("start");
+
+    const first = await runtime!.dispatchNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      token: firstAction.token,
+    });
+    const replay = await runtime!.dispatchNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      token: firstAction.token,
+    });
+    expect(replay).toEqual({ ...first, outcome: "replay" });
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    await expect(
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:other",
+        decision: "allow-once",
+        token: firstAction.token,
+      }),
+    ).rejects.toThrow("external verification action is invalid");
+    await expect(
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-always",
+        token: firstAction.token,
+      }),
+    ).rejects.toThrow("external verification action is invalid");
+
+    const retryAction = runtime!.prepareNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+    });
+    expect(retryAction.intent).toBe("retry");
+    expect(retryAction.token).not.toBe(firstAction.token);
+
+    const newer = await runtime!.start({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      interactionId: "f".repeat(64),
+      present: async () => undefined,
+    });
+    await expect(
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        token: firstAction.token,
+      }),
+    ).resolves.toMatchObject({
+      outcome: "stale-action",
+      attempt: { id: newer.id },
+      presentations: [`Verify attempt ${newer.id}.`],
+    });
+    const staleRetry = await runtime!.dispatchNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      token: retryAction.token,
+    });
+    expect(staleRetry).toMatchObject({
+      outcome: "stale-action",
+      attempt: { id: newer.id },
+      presentations: [`Verify attempt ${newer.id}.`],
+    });
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a stale weaker native action after a stronger attempt starts", async () => {
+    const handler = vi.fn(async (attempt: PluginExternalVerificationAttempt) => {
+      await attempt.present({ message: `Verify attempt ${attempt.id}.` });
+    });
+    const { databaseOptions } = createHarness(handler);
+    const weakerAction = runtime!.prepareNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+    });
+    await runtime!.dispatchNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      token: weakerAction.token,
+    });
+    const stronger = await runtime!.start({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-always",
+      interactionId: "f".repeat(64),
+      present: async () => undefined,
+    });
+
+    await expect(
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        token: weakerAction.token,
+      }),
+    ).rejects.toThrow("external verification action is stale; prepare a fresh action");
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(readApproval(databaseOptions)).toMatchObject({ status: "pending" });
+    expect(stronger.context.decision).toBe("allow-always");
+  });
+
+  it("coalesces concurrent native dispatches until every presentation is ready", async () => {
+    let releaseSetup = () => {};
+    const setupGate = new Promise<void>((resolve) => {
+      releaseSetup = resolve;
+    });
+    let signalFirstPresentation = () => {};
+    const firstPresentation = new Promise<void>((resolve) => {
+      signalFirstPresentation = resolve;
+    });
+    const handler = vi.fn(async (attempt: PluginExternalVerificationAttempt) => {
+      await attempt.present({ message: "First reviewer instruction." });
+      signalFirstPresentation();
+      await setupGate;
+      await attempt.present({ message: "Second reviewer instruction." });
+    });
+    createHarness(handler);
+    const action = runtime!.prepareNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+    });
+
+    const firstDispatch = runtime!.dispatchNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      token: action.token,
+    });
+    await firstPresentation;
+    let replaySettled = false;
+    const replayDispatch = runtime!
+      .dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        token: action.token,
+      })
+      .finally(() => {
+        replaySettled = true;
+      });
+    await Promise.resolve();
+    expect(replaySettled).toBe(false);
+
+    releaseSetup();
+    const [first, replay] = await Promise.all([firstDispatch, replayDispatch]);
+    expect(first).toMatchObject({
+      outcome: "started",
+      presentations: ["First reviewer instruction.", "Second reviewer instruction."],
+    });
+    expect(replay).toEqual({ ...first, outcome: "replay" });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays a native setup failure without reporting an empty success", async () => {
+    let invocation = 0;
+    const handler = vi.fn(() => {
+      invocation += 1;
+      throw new Error(`setup failed ${invocation}`);
+    });
+    const { databaseOptions } = createHarness(handler);
+    const action = runtime!.prepareNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+    });
+    const dispatch = () =>
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        token: action.token,
+      });
+
+    await expect(dispatch()).rejects.toThrow("setup failed 1");
+    await expect(dispatch()).resolves.toMatchObject({
+      outcome: "replay",
+      presentations: [],
+      attempt: {
+        outcome: "failed",
+        terminalSource: "verifier-error",
+      },
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(readApproval(databaseOptions)).toMatchObject({ status: "pending" });
+
+    const retry = runtime!.prepareNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+    });
+    expect(retry.token).not.toBe(action.token);
+    await expect(
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        token: retry.token,
+      }),
+    ).rejects.toThrow("setup failed 2");
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates a prepared native action when the registered verifier instance changes", async () => {
+    const handler = vi.fn(async (attempt: PluginExternalVerificationAttempt) => {
+      await attempt.present({ message: "Verify this attempt." });
+    });
+    const { setVerifier } = createHarness(handler);
+    const prepared = runtime!.prepareNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+    });
+    setVerifier({
+      pluginId: "agentkit",
+      pluginName: "Replacement AgentKit",
+      owner: {},
+      handler,
+      source: "/plugins/agentkit/replacement.js",
+    });
+
+    await expect(
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        token: prepared.token,
+      }),
+    ).rejects.toThrow("external verification action is invalid");
+    expect(handler).not.toHaveBeenCalled();
+    expect(
+      runtime!.prepareNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+      }).token,
+    ).not.toBe(prepared.token);
+  });
+
   it("keeps the approval pending when the verifier fails before presenting instructions", async () => {
     const { databaseOptions } = createHarness(() => undefined);
 
@@ -338,6 +582,26 @@ describe("PluginExternalVerificationRuntime", () => {
         },
       }),
     ).rejects.toThrow("returned without presenting reviewer instructions");
+    expect(readApproval(databaseOptions)).toMatchObject({ status: "pending" });
+  });
+
+  it("bounds concurrent reviewer presentations to the native response contract", async () => {
+    const { databaseOptions } = createHarness(async (attempt) => {
+      await Promise.all(
+        Array.from({ length: 9 }, (_, index) =>
+          attempt.present({ message: `Reviewer message ${index + 1}.` }),
+        ),
+      );
+    });
+
+    await expect(
+      runtime!.start({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        interactionId: "a".repeat(64),
+        present: async () => undefined,
+      }),
+    ).rejects.toThrow("may present at most 8 reviewer messages");
     expect(readApproval(databaseOptions)).toMatchObject({ status: "pending" });
   });
 
