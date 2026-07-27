@@ -119,6 +119,36 @@ describe("plugin external verification store", () => {
     ).toEqual({ outcome: "replay", attempt: first.outcome === "started" ? first.attempt : null });
   });
 
+  it("reports expiry before replaying an active interaction", () => {
+    const databaseOptions = createDatabaseOptions();
+    insertExternalApproval({ databaseOptions, expiresAtMs: 2_050 });
+    const request = {
+      approvalId: "plugin:approval-1",
+      decision: "allow-once" as const,
+      interactionId: "a".repeat(64),
+      runtimeEpoch: "epoch-1",
+      databaseOptions,
+    };
+    const started = startExternalVerificationAttempt({ ...request, nowMs: 2_000 });
+    if (started.outcome !== "started") {
+      throw new Error("expected active attempt");
+    }
+
+    expect(startExternalVerificationAttempt({ ...request, nowMs: 2_100 })).toEqual({
+      outcome: "approval-expired",
+    });
+    expect(getApproval("plugin:approval-1", databaseOptions, 2_000)).toMatchObject({
+      status: "pending",
+    });
+    expect(
+      getExternalVerificationAttemptSnapshot({
+        attemptId: started.attempt.id,
+        pluginId: "agentkit",
+        databaseOptions,
+      }),
+    ).not.toHaveProperty("outcome");
+  });
+
   it("replays a superseded interaction instead of reviving its stale decision", () => {
     const databaseOptions = createDatabaseOptions();
     expect(insertExternalApproval({ databaseOptions })).toMatchObject({ outcome: "inserted" });
@@ -422,7 +452,7 @@ describe("plugin external verification store", () => {
     });
   });
 
-  it("times out an expired approval before a late success can authorize a grant", () => {
+  it("reports an expired approval to the runtime before a late success can authorize a grant", () => {
     const databaseOptions = createDatabaseOptions();
     insertExternalApproval({ databaseOptions, expiresAtMs: 2_050 });
     const started = startExternalVerificationAttempt({
@@ -447,15 +477,20 @@ describe("plugin external verification store", () => {
     });
 
     expect(completion).toMatchObject({
-      outcome: "completed",
-      applied: false,
-      attempt: { outcome: "timed-out", terminalSource: "timeout" },
+      outcome: "approval-expired",
+      approvalId: "plugin:approval-1",
     });
     expect(completion).not.toHaveProperty("grantAuthorization");
-    expect(getApproval("plugin:approval-1", databaseOptions, 2_100)).toMatchObject({
-      status: "expired",
-      terminalReason: "timeout",
+    expect(getApproval("plugin:approval-1", databaseOptions, 2_000)).toMatchObject({
+      status: "pending",
     });
+    expect(
+      getExternalVerificationAttemptSnapshot({
+        attemptId: started.attempt.id,
+        pluginId: "agentkit",
+        databaseOptions,
+      }),
+    ).not.toHaveProperty("outcome");
   });
 
   it("records run cancellation as terminal before replaying a late completion", () => {

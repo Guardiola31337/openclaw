@@ -23,6 +23,7 @@ const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
     runtime?.shutdown();
     runtime = null;
     closeOpenClawStateDatabaseForTest();
+    vi.restoreAllMocks();
     cleanup();
   });
 });
@@ -170,6 +171,78 @@ describe("PluginExternalVerificationRuntime", () => {
       }),
     ).resolves.toEqual({ ...completed, applied: false });
     await expect(decision).resolves.toBe("allow-always");
+  });
+
+  it("expires through the manager before replaying a delayed reviewer interaction", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    let attempt: PluginExternalVerificationAttempt | undefined;
+    const { databaseOptions, decision } = createHarness(async (value) => {
+      attempt = value;
+      await value.present({ message: "Verify now." });
+    });
+    const firstPresent = vi.fn(async () => undefined);
+    await runtime!.start({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      interactionId: "a".repeat(64),
+      present: firstPresent,
+    });
+    now.mockReturnValue(61_000);
+    const replayPresent = vi.fn(async () => undefined);
+
+    await expect(
+      runtime!.start({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        interactionId: "a".repeat(64),
+        present: replayPresent,
+      }),
+    ).resolves.toMatchObject({
+      outcome: "timed-out",
+      terminalSource: "timeout",
+    });
+
+    expect(firstPresent).toHaveBeenCalledOnce();
+    expect(replayPresent).not.toHaveBeenCalled();
+    expect(attempt?.signal.aborted).toBe(true);
+    expect(readApproval(databaseOptions)).toMatchObject({
+      status: "expired",
+      terminalReason: "timeout",
+    });
+    await expect(decision).resolves.toBeNull();
+  });
+
+  it("expires through the manager when a verifier completes after the deadline", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    let attempt: PluginExternalVerificationAttempt | undefined;
+    const { databaseOptions, owner, decision } = createHarness(async (value) => {
+      attempt = value;
+      await value.present({ message: "Verify now." });
+    });
+    const started = await runtime!.start({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-always",
+      interactionId: "a".repeat(64),
+      present: async () => undefined,
+    });
+    now.mockReturnValue(61_000);
+
+    await expect(
+      runtime!.complete(owner, "agentkit", {
+        attemptId: started.id,
+        outcome: "succeeded",
+      }),
+    ).resolves.toMatchObject({
+      applied: false,
+      approval: { status: "expired" },
+      attempt: { outcome: "timed-out", terminalSource: "timeout" },
+    });
+    expect(attempt?.signal.aborted).toBe(true);
+    expect(readApproval(databaseOptions)).toMatchObject({
+      status: "expired",
+      terminalReason: "timeout",
+    });
+    await expect(decision).resolves.toBeNull();
   });
 
   it("keeps the approval pending when the verifier fails before presenting instructions", async () => {

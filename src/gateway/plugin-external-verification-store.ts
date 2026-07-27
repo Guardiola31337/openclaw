@@ -36,6 +36,7 @@ type StartExternalVerificationResult =
     }
   | {
       outcome:
+        | "approval-expired"
         | "approval-not-found"
         | "approval-not-pending"
         | "decision-unavailable"
@@ -52,6 +53,7 @@ type CompleteExternalVerificationStoreResult =
       attempt: PluginExternalVerificationAttemptSnapshot;
       grantAuthorization?: PluginExternalVerificationGrantAuthorization;
     }
+  | { outcome: "approval-expired"; approvalId: string }
   | { outcome: "attempt-not-found" };
 
 export function getExternalVerificationAttemptSnapshot(params: {
@@ -193,30 +195,6 @@ function selectAttempt(
   );
 }
 
-function closeExpiredApproval(params: {
-  database: OpenClawStateDatabase;
-  row: OperatorApprovalRow;
-  nowMs: number;
-}): void {
-  const stateDb = getNodeSqliteKysely<ExternalVerificationDatabase>(params.database.db);
-  executeSqliteQuerySync(
-    params.database.db,
-    stateDb
-      .updateTable("operator_approvals")
-      .set({
-        status: "expired",
-        decision: "deny",
-        terminal_reason: "timeout",
-        resolved_at_ms: params.nowMs,
-        resolver_kind: "system",
-        resolver_id: null,
-        updated_at_ms: params.nowMs,
-      })
-      .where("approval_id", "=", params.row.approval_id)
-      .where("status", "=", "pending"),
-  );
-}
-
 /** Start or replay one reviewer interaction, replacing only an active prior attempt. */
 export function startExternalVerificationAttempt(params: {
   approvalId: string;
@@ -253,6 +231,11 @@ export function startExternalVerificationAttempt(params: {
     ) {
       return { outcome: "reviewer-unauthorized" };
     }
+    // The manager owns terminal lifecycle publication and in-memory cancellation.
+    // Report due state before replay so the runtime can expire through that owner.
+    if (approval.status === "pending" && approval.expires_at_ms <= nowMs) {
+      return { outcome: "approval-expired" };
+    }
     const replay = executeSqliteQueryTakeFirstSync(
       database.db,
       stateDb
@@ -265,10 +248,6 @@ export function startExternalVerificationAttempt(params: {
       return { outcome: "replay", attempt: decodeAttempt(replay) };
     }
     if (approval.status !== "pending") {
-      return { outcome: "approval-not-pending" };
-    }
-    if (approval.expires_at_ms <= nowMs) {
-      closeExpiredApproval({ database, row: approval, nowMs });
       return { outcome: "approval-not-pending" };
     }
     const external = readExternalResolution(approval);
@@ -463,31 +442,28 @@ export function completeExternalVerificationAttempt(params: {
         .selectAll()
         .where("approval_id", "=", attempt.approval_id),
     );
-    if (
-      !approval ||
-      approval.kind !== "plugin" ||
-      approval.runtime_epoch !== params.runtimeEpoch ||
-      approval.status !== "pending" ||
-      approval.source_run_id !== attempt.run_id ||
-      approval.expires_at_ms <= nowMs
-    ) {
-      if (approval?.status === "pending" && approval.expires_at_ms <= nowMs) {
-        closeExpiredApproval({ database, row: approval, nowMs });
-      } else {
-        executeSqliteQuerySync(
-          database.db,
-          stateDb
-            .updateTable("plugin_external_verification_attempts")
-            .set({
-              ended_at_ms: nowMs,
-              outcome: "cancelled",
-              terminal_source: "approval-unavailable",
-              completion_applied: 0,
-            })
-            .where("attempt_id", "=", params.attemptId)
-            .where("ended_at_ms", "is", null),
-        );
-      }
+    const matchesApproval =
+      approval?.kind === "plugin" &&
+      approval.runtime_epoch === params.runtimeEpoch &&
+      approval.status === "pending" &&
+      approval.source_run_id === attempt.run_id;
+    if (matchesApproval && approval.expires_at_ms <= nowMs) {
+      return { outcome: "approval-expired", approvalId: attempt.approval_id };
+    }
+    if (!matchesApproval) {
+      executeSqliteQuerySync(
+        database.db,
+        stateDb
+          .updateTable("plugin_external_verification_attempts")
+          .set({
+            ended_at_ms: nowMs,
+            outcome: "cancelled",
+            terminal_source: "approval-unavailable",
+            completion_applied: 0,
+          })
+          .where("attempt_id", "=", params.attemptId)
+          .where("ended_at_ms", "is", null),
+      );
       attempt = selectAttempt(database, params.attemptId)!;
       return {
         outcome: "completed",

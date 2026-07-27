@@ -201,14 +201,19 @@ export class PluginExternalVerificationRuntime {
     reviewerDeviceId?: string;
     present: PresentExternalVerification;
   }): Promise<PluginExternalVerificationAttemptSnapshot> {
-    const started = startExternalVerificationAttempt({
+    const storeParams = {
       approvalId: params.approvalId,
       decision: params.decision,
       interactionId: params.interactionId,
       reviewerDeviceId: params.reviewerDeviceId,
       runtimeEpoch: this.params.runtimeEpoch,
       databaseOptions: this.params.databaseOptions,
-    });
+    };
+    let started = startExternalVerificationAttempt(storeParams);
+    if (started.outcome === "approval-expired") {
+      this.params.manager.expire(params.approvalId);
+      started = startExternalVerificationAttempt(storeParams);
+    }
     if (started.outcome !== "started" && started.outcome !== "replay") {
       throw new Error(`external verification unavailable: ${started.outcome}`);
     }
@@ -386,13 +391,21 @@ export class PluginExternalVerificationRuntime {
     ) {
       throw new Error("external verification attempt is not active in this runtime");
     }
-    const stored = completeExternalVerificationAttempt({
+    const storeParams = {
       attemptId: completion.attemptId,
       pluginId,
       outcome: completion.outcome,
       runtimeEpoch: this.params.runtimeEpoch,
       databaseOptions: this.params.databaseOptions,
-    });
+    };
+    let stored = completeExternalVerificationAttempt(storeParams);
+    if (stored.outcome === "approval-expired") {
+      this.params.manager.expire(stored.approvalId);
+      stored = completeExternalVerificationAttempt(storeParams);
+    }
+    if (stored.outcome === "approval-expired") {
+      throw new Error("external verification approval expiry could not be reconciled");
+    }
     if (stored.outcome === "attempt-not-found") {
       throw new Error("external verification attempt not found for this plugin");
     }
