@@ -583,83 +583,51 @@ describe("TUI plugin approvals", () => {
     expect(harness.addPendingSystem).not.toHaveBeenCalled();
   });
 
-  it("suppresses verifier failure after another reviewer resolves the approval", async () => {
-    const harness = createHarness();
-    const pending = deferred<{ outcome: "started"; presentations: string[] }>();
-    harness.startExternalPluginApproval.mockReturnValueOnce(pending.promise);
-    harness.controller.handleEvent(
-      "plugin.approval.requested",
-      approvalPayload({
-        id: "plugin:world-fails-after-resolution",
-        request: {
-          ...approvalPayload().request,
-          allowedDecisions: ["deny"],
-          externalResolution: {
-            label: "Verify with World",
-            decisions: ["allow-once"],
+  it.each(["resolved", "disposed"] as const)(
+    "suppresses verifier failure after the approval controller is %s",
+    async (transition) => {
+      const harness = createHarness();
+      const pending = deferred<{ outcome: "started"; presentations: string[] }>();
+      const id = `plugin:world-fails-after-${transition}`;
+      harness.startExternalPluginApproval.mockReturnValueOnce(pending.promise);
+      harness.controller.handleEvent(
+        "plugin.approval.requested",
+        approvalPayload({
+          id,
+          request: {
+            ...approvalPayload().request,
+            allowedDecisions: ["deny"],
+            externalResolution: {
+              label: "Verify with World",
+              decisions: ["allow-once"],
+            },
           },
-        },
-      }),
-    );
+        }),
+      );
 
-    harness.selectors[0]?.onSelectionChange?.({
-      value: "external:allow-once",
-      label: "Verify once",
-    });
-    harness.selectors[0]?.onSelect?.({
-      value: "external:allow-once",
-      label: "Verify once",
-    });
-    await vi.waitFor(() => {
-      expect(harness.startExternalPluginApproval).toHaveBeenCalledOnce();
-    });
-    harness.controller.handleEvent("plugin.approval.resolved", {
-      id: "plugin:world-fails-after-resolution",
-    });
+      harness.selectors[0]?.onSelectionChange?.({
+        value: "external:allow-once",
+        label: "Verify once",
+      });
+      harness.selectors[0]?.onSelect?.({
+        value: "external:allow-once",
+        label: "Verify once",
+      });
+      await vi.waitFor(() => {
+        expect(harness.startExternalPluginApproval).toHaveBeenCalledOnce();
+      });
+      if (transition === "resolved") {
+        harness.controller.handleEvent("plugin.approval.resolved", { id });
+      } else {
+        harness.controller.dispose();
+      }
 
-    pending.reject(new Error("late verifier failure"));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(harness.addSystem).not.toHaveBeenCalled();
-  });
-
-  it("suppresses verifier failure after the controller is disposed", async () => {
-    const harness = createHarness();
-    const pending = deferred<{ outcome: "started"; presentations: string[] }>();
-    harness.startExternalPluginApproval.mockReturnValueOnce(pending.promise);
-    harness.controller.handleEvent(
-      "plugin.approval.requested",
-      approvalPayload({
-        id: "plugin:world-fails-after-dispose",
-        request: {
-          ...approvalPayload().request,
-          allowedDecisions: ["deny"],
-          externalResolution: {
-            label: "Verify with World",
-            decisions: ["allow-once"],
-          },
-        },
-      }),
-    );
-
-    harness.selectors[0]?.onSelectionChange?.({
-      value: "external:allow-once",
-      label: "Verify once",
-    });
-    harness.selectors[0]?.onSelect?.({
-      value: "external:allow-once",
-      label: "Verify once",
-    });
-    await vi.waitFor(() => {
-      expect(harness.startExternalPluginApproval).toHaveBeenCalledOnce();
-    });
-    harness.controller.dispose();
-
-    pending.reject(new Error("late verifier failure"));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(harness.addSystem).not.toHaveBeenCalled();
-  });
+      pending.reject(new Error("late verifier failure"));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(harness.addSystem).not.toHaveBeenCalled();
+    },
+  );
 
   it("reopens with a fresh action instead of rendering a stale-action response", async () => {
     const harness = createHarness();
