@@ -169,12 +169,12 @@ class PluginApprovalPrompt implements Component {
       return [...visibleContext, ...controls, ...challenge.slice(0, challengeBudget)];
     }
     if (externalResolution.some((line) => line.trim())) {
-      return [
-        ...context,
-        ...(confirmation.some((line) => line.trim()) ? ["", ...confirmation] : []),
-        "",
+      const controls = [
+        ...(confirmation.some((line) => line.trim()) ? confirmation : []),
         ...selector,
       ];
+      const contextBudget = Math.max(0, MAX_APPROVAL_PROMPT_ROWS - controls.length);
+      return [...context.slice(0, contextBudget), ...controls];
     }
     return [
       ...context,
@@ -594,7 +594,10 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
           decision,
           prepared.action.actionToken,
         );
-        if (result.presentations.length > 0) {
+        if (
+          result.presentations.length > 0 &&
+          queue.some((candidate) => candidate.id === approval.id)
+        ) {
           externalPresentations.set(approval.id, result.presentations);
           deps.chatLog.addPendingSystem(
             externalPresentationId(approval.id),
