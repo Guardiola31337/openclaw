@@ -324,6 +324,11 @@ describe("TUI plugin approvals", () => {
     const renderedPrompt = stripAnsi(
       expectDefined(prompt, "prompt test invariant").render(100).join("\n"),
     );
+    expect(renderedPrompt).toContain("plugin approval: World proof required for exec");
+    expect(renderedPrompt).toContain("Severity: Warning");
+    expect(renderedPrompt).toContain("Tool: exec");
+    expect(renderedPrompt).toContain("Plugin: openclaw-agentkit");
+    expect(renderedPrompt).toContain("Request:");
     expect(renderedPrompt).toContain("Verify with World");
     expect(renderedPrompt).not.toContain("/approve");
     expect(renderedPrompt).toContain("Press Escape to dismiss; the request remains pending.");
@@ -356,6 +361,30 @@ describe("TUI plugin approvals", () => {
     expect(harness.addSystem).toHaveBeenCalledWith("Scan this challenge");
     expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
     expect(harness.closeOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("never exposes generic allow actions for an external approval", () => {
+    const harness = createHarness();
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-no-generic-decisions",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: undefined,
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    expect(harness.selectors[0]?.items.map((item) => item.value)).toEqual([
+      "external:allow-once",
+      "deny",
+    ]);
+    expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
   });
 
   it("keeps fail-closed choices visible above a terminal QR at 80x24", async () => {
@@ -405,14 +434,16 @@ describe("TUI plugin approvals", () => {
     const lines = expectDefined(challengePrompt, "challenge prompt test invariant").render(80);
     const rendered = stripAnsi(lines.join("\n"));
     expect(lines.length).toBeLessThanOrEqual(24);
+    expect(rendered).toContain("workspace skill approval:");
+    expect(rendered).toContain("Severity: Warning");
+    expect(rendered).toContain("Plugin: workspace-skills");
     expect(rendered.indexOf("Verify once")).toBeLessThan(rendered.indexOf("QR row 1"));
     expect(rendered).toContain("Deny");
     expect(rendered).toContain("worldapp://verify/example");
     expect(rendered.indexOf("worldapp://verify/example")).toBeLessThan(
       rendered.indexOf("QR row 1"),
     );
-    expect(rendered).toContain("QR row 19");
-    expect(rendered).not.toContain("QR row 20");
+    expect(rendered).toContain("QR row 1");
     expect(rendered).not.toContain("QR row 200");
   });
 

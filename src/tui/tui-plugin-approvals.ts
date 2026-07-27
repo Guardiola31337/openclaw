@@ -28,7 +28,7 @@ type ApprovalSelector = Component & {
 const APPROVAL_BIDI_CONTROL_RE = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 const FENCED_PRESENTATION_RE = /(?:^|\n)(```|~~~)[^\n]*\n([\s\S]*?)\n\1(?=\n|$)/g;
 const MAX_COMPACT_PRESENTATION_CHARS = 480;
-const MAX_COMPACT_PRESENTATION_ROWS = 21;
+const MAX_APPROVAL_PROMPT_ROWS = 24;
 const TERMINAL_BLACK_ON_WHITE = "\x1b[47m\x1b[30m";
 const TERMINAL_RESET = "\x1b[0m";
 
@@ -140,33 +140,44 @@ class PluginApprovalPrompt implements Component {
   }
 
   render(width: number): string[] {
-    const challenge = this.challenge.render(width).slice(0, MAX_COMPACT_PRESENTATION_ROWS);
+    const challenge = this.challenge.render(width);
     const confirmation = this.confirmation.render(width);
     const selector = this.selector.render(width);
-    if (challenge.some((line) => line.trim())) {
-      // Keep actions above a potentially tall QR so a short terminal never
-      // hides the fail-closed controls. The complete presentation stays in chat.
-      return [
-        ...selector,
-        ...(confirmation.some((line) => line.trim()) ? confirmation : []),
-        ...challenge,
-      ];
-    }
+    const title = this.title.render(width);
+    const metadata = this.metadata.render(width);
     const description = this.description.render(width);
     const externalResolution = this.externalResolution.render(width);
+    const context = [
+      ...title,
+      ...metadata,
+      ...(description.some((line) => line.trim()) ? description : []),
+      ...(externalResolution.some((line) => line.trim()) ? externalResolution : []),
+    ];
+    if (challenge.some((line) => line.trim())) {
+      const controls = [
+        ...selector,
+        ...(confirmation.some((line) => line.trim()) ? confirmation : []),
+      ];
+      const contextBudget = Math.max(0, MAX_APPROVAL_PROMPT_ROWS - controls.length - 1);
+      const visibleContext = context.slice(0, contextBudget);
+      const challengeBudget = Math.max(
+        1,
+        MAX_APPROVAL_PROMPT_ROWS - visibleContext.length - controls.length,
+      );
+      // Keep authorization context and actions above a potentially tall QR.
+      // The challenge fallback is first, and the complete presentation stays in chat.
+      return [...visibleContext, ...controls, ...challenge.slice(0, challengeBudget)];
+    }
     if (externalResolution.some((line) => line.trim())) {
       return [
-        ...this.title.render(width),
-        ...externalResolution,
+        ...context,
         ...(confirmation.some((line) => line.trim()) ? ["", ...confirmation] : []),
         "",
         ...selector,
       ];
     }
     return [
-      ...this.title.render(width),
-      ...this.metadata.render(width),
-      ...(description.some((line) => line.trim()) ? description : []),
+      ...context,
       ...(confirmation.some((line) => line.trim()) ? ["", ...confirmation] : []),
       "",
       ...selector,
@@ -449,8 +460,10 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
     activeId = approval.id;
     const surfaceLabel = approvalSurfaceLabel(approval);
 
-    const decisions = approval.request.allowedDecisions ?? DEFAULT_DECISIONS;
     const externalDecisions = approval.request.externalResolution?.decisions ?? [];
+    const decisions = approval.request.externalResolution
+      ? (["deny"] as const)
+      : (approval.request.allowedDecisions ?? DEFAULT_DECISIONS);
     const canDispatchExternal = Boolean(
       deps.client.prepareExternalPluginApproval && deps.client.startExternalPluginApproval,
     );
