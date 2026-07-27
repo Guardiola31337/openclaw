@@ -37,8 +37,23 @@ function sanitizeApprovalText(text: string): string {
   return sanitizeRenderableText(flattened);
 }
 
-function extractLatestFencedPresentation(presentations: readonly string[]): string | null {
-  let latest: string | null = null;
+type FencedPresentation = {
+  content: string;
+  fallback: string;
+};
+
+function compactPresentationText(text: string): string {
+  const compact = sanitizeApprovalText(text);
+  const characters = Array.from(compact);
+  return characters.length <= MAX_COMPACT_PRESENTATION_CHARS
+    ? compact
+    : `${characters.slice(0, MAX_COMPACT_PRESENTATION_CHARS - 1).join("")}…`;
+}
+
+function extractLatestFencedPresentation(
+  presentations: readonly string[],
+): FencedPresentation | null {
+  let latest: FencedPresentation | null = null;
   for (const presentation of presentations) {
     const sanitized = sanitizeRenderableText(presentation);
     FENCED_PRESENTATION_RE.lastIndex = 0;
@@ -47,7 +62,11 @@ function extractLatestFencedPresentation(presentations: readonly string[]): stri
       match;
       match = FENCED_PRESENTATION_RE.exec(sanitized)
     ) {
-      latest = match[2] ?? null;
+      const matchEnd = match.index + match[0].length;
+      latest = {
+        content: match[2] ?? "",
+        fallback: compactPresentationText(sanitized.slice(matchEnd)),
+      };
     }
   }
   return latest;
@@ -56,20 +75,14 @@ function extractLatestFencedPresentation(presentations: readonly string[]): stri
 function formatCompactPresentation(presentations: readonly string[]): string {
   const fenced = extractLatestFencedPresentation(presentations);
   if (fenced !== null) {
-    return fenced
+    const content = fenced.content
       .split("\n")
       .map((line) => `${TERMINAL_BLACK_ON_WHITE}${line}${TERMINAL_RESET}`)
       .join("\n");
+    return fenced.fallback ? `${fenced.fallback}\n${content}` : content;
   }
   const latest = presentations.at(-1);
-  if (!latest) {
-    return "";
-  }
-  const compact = sanitizeApprovalText(latest);
-  const characters = Array.from(compact);
-  return characters.length <= MAX_COMPACT_PRESENTATION_CHARS
-    ? compact
-    : `${characters.slice(0, MAX_COMPACT_PRESENTATION_CHARS - 1).join("")}…`;
+  return latest ? compactPresentationText(latest) : "";
 }
 
 class PluginApprovalPrompt implements Component {

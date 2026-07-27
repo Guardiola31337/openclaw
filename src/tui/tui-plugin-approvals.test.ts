@@ -407,10 +407,13 @@ describe("TUI plugin approvals", () => {
     expect(lines.length).toBeLessThanOrEqual(24);
     expect(rendered.indexOf("Verify once")).toBeLessThan(rendered.indexOf("QR row 1"));
     expect(rendered).toContain("Deny");
-    expect(rendered).toContain("QR row 20");
-    expect(rendered).not.toContain("QR row 21");
+    expect(rendered).toContain("worldapp://verify/example");
+    expect(rendered.indexOf("worldapp://verify/example")).toBeLessThan(
+      rendered.indexOf("QR row 1"),
+    );
+    expect(rendered).toContain("QR row 19");
+    expect(rendered).not.toContain("QR row 20");
     expect(rendered).not.toContain("QR row 200");
-    expect(rendered).not.toContain("worldapp://verify/example");
   });
 
   it("dismisses external verification without denying", () => {
