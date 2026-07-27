@@ -148,10 +148,10 @@ class PluginApprovalPrompt implements Component {
     const description = this.description.render(width);
     const externalResolution = this.externalResolution.render(width);
     const context = [
-      ...title,
+      ...title.slice(0, 2),
       ...metadata,
-      ...(description.some((line) => line.trim()) ? description : []),
       ...(externalResolution.some((line) => line.trim()) ? externalResolution : []),
+      ...(description.some((line) => line.trim()) ? description : []),
     ];
     if (challenge.some((line) => line.trim())) {
       const controls = [
@@ -278,7 +278,7 @@ function parseAllowedDecisions(value: unknown): TuiApprovalDecision[] | undefine
       decisions.push(decision);
     }
   }
-  return decisions.length > 0 ? decisions : undefined;
+  return decisions;
 }
 
 function parseExternalResolution(

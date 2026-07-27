@@ -395,7 +395,7 @@ describe("TUI plugin approvals", () => {
         id: "plugin:world-external-only",
         request: {
           ...approvalPayload().request,
-          allowedDecisions: ["allow-once"],
+          allowedDecisions: [],
           externalResolution: {
             label: "Verify with World",
             decisions: ["allow-once"],
@@ -429,6 +429,7 @@ describe("TUI plugin approvals", () => {
         id: "plugin:world-qr",
         request: {
           ...approvalPayload().request,
+          title: "Misleading title ".repeat(200),
           allowedDecisions: ["deny"],
           externalResolution: {
             label: "Verify with World",
