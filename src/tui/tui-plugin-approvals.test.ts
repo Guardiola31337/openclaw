@@ -501,6 +501,43 @@ describe("TUI plugin approvals", () => {
     expect(rendered).not.toContain("QR row 200");
   });
 
+  it("does not dispatch after the approval resolves during action preparation", async () => {
+    const harness = createHarness();
+    const pending = deferred<{ intent: "start"; actionToken: string }>();
+    harness.prepareExternalPluginApproval.mockReturnValueOnce(pending.promise);
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-resolves-during-prepare",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.controller.handleEvent("plugin.approval.resolved", {
+      id: "plugin:world-resolves-during-prepare",
+    });
+
+    pending.resolve({ intent: "start", actionToken: "stale-action" });
+    await pending.promise;
+    await Promise.resolve();
+    expect(harness.startExternalPluginApproval).not.toHaveBeenCalled();
+  });
+
   it("discards a verifier challenge when the approval resolves during dispatch", async () => {
     const harness = createHarness();
     const pending = deferred<{ outcome: "started"; presentations: string[] }>();
@@ -541,6 +578,44 @@ describe("TUI plugin approvals", () => {
       expect(harness.requestRender.mock.calls.length).toBeGreaterThan(renderCountAfterResolution);
     });
     expect(harness.addPendingSystem).not.toHaveBeenCalled();
+  });
+
+  it("reopens with a fresh action instead of rendering a stale-action response", async () => {
+    const harness = createHarness();
+    harness.startExternalPluginApproval.mockResolvedValueOnce({
+      outcome: "stale-action",
+      presentations: ["Stale challenge"],
+    });
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-stale-action",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.selectors).toHaveLength(2);
+    });
+    expect(harness.addPendingSystem).not.toHaveBeenCalled();
+    expect(harness.addSystem).toHaveBeenCalledWith(
+      "workspace skill approval failed: external approval action is stale; retry from the current prompt",
+    );
   });
 
   it("dismisses external verification without denying", () => {

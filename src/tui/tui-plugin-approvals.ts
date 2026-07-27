@@ -586,6 +586,10 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
         if (!prepared.ok) {
           throw prepared.error;
         }
+        if (disposed || !queue.some((candidate) => candidate.id === approval.id)) {
+          resolvingIds.delete(approval.id);
+          return;
+        }
         if (!deps.client.startExternalPluginApproval) {
           throw new Error("external approval action dispatch is unavailable");
         }
@@ -594,6 +598,9 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
           decision,
           prepared.action.actionToken,
         );
+        if (result.outcome === "stale-action") {
+          throw new Error("external approval action is stale; retry from the current prompt");
+        }
         if (
           result.presentations.length > 0 &&
           queue.some((candidate) => candidate.id === approval.id)
