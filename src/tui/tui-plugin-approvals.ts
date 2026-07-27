@@ -14,7 +14,6 @@ import type {
   TuiBackend,
   TuiExternalApprovalDecision,
   TuiPluginApproval,
-  TuiPreparedExternalApprovalAction,
 } from "./tui-backend.js";
 import { sanitizeRenderableText } from "./tui-formatters.js";
 
@@ -483,23 +482,6 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
     const canDispatchExternal = Boolean(
       deps.client.prepareExternalPluginApproval && deps.client.startExternalPluginApproval,
     );
-    const preparedActions = new Map<
-      TuiExternalApprovalDecision,
-      Promise<
-        { ok: true; action: TuiPreparedExternalApprovalAction } | { ok: false; error: unknown }
-      >
-    >();
-    if (canDispatchExternal) {
-      for (const decision of externalDecisions) {
-        preparedActions.set(
-          decision,
-          deps.client.prepareExternalPluginApproval!(approval.id, decision).then(
-            (action) => ({ ok: true as const, action }),
-            (error: unknown) => ({ ok: false as const, error }),
-          ),
-        );
-      }
-    }
     const items = [
       ...(canDispatchExternal
         ? externalDecisions.map((decision) => EXTERNAL_DECISION_ITEMS[decision])
@@ -579,13 +561,10 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       clearExternalPresentation(approval.id);
       deps.requestRender();
       try {
-        const prepared = await preparedActions.get(decision);
-        if (!prepared) {
+        if (!deps.client.prepareExternalPluginApproval) {
           throw new Error("external approval action preparation is unavailable");
         }
-        if (!prepared.ok) {
-          throw prepared.error;
-        }
+        const prepared = await deps.client.prepareExternalPluginApproval(approval.id, decision);
         if (disposed || !queue.some((candidate) => candidate.id === approval.id)) {
           resolvingIds.delete(approval.id);
           return;
@@ -596,7 +575,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
         const result = await deps.client.startExternalPluginApproval(
           approval.id,
           decision,
-          prepared.action.actionToken,
+          prepared.actionToken,
         );
         if (result.outcome === "stale-action") {
           throw new Error("external approval action is stale; retry from the current prompt");

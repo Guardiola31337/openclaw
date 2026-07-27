@@ -342,6 +342,7 @@ describe("TUI plugin approvals", () => {
       "external:allow-always",
       "deny",
     ]);
+    expect(harness.prepareExternalPluginApproval).not.toHaveBeenCalled();
 
     harness.selectors[0]?.onSelectionChange?.({
       value: "external:allow-once",

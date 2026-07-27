@@ -816,25 +816,20 @@ describe.sequential("TUI PTY harness", () => {
       await fixture.run.write("external approval proof\r");
       await fixture.run.waitForOutput("plugin approval: World proof required for exec");
       await fixture.run.waitForOutput("Verify with World");
+
+      await fixture.run.write("\x1b[A", { delay: false });
+      await fixture.run.write("\r");
       await fixture.waitForLogEntry(
         (entry) =>
           entry.method === "prepareExternalPluginApproval" &&
           objectFieldEquals(entry, "intent", "start"),
       );
-
-      await fixture.run.write("\x1b[A", { delay: false });
-      await fixture.run.write("\r");
       await fixture.waitForLogEntry(
         (entry) =>
           entry.method === "startExternalPluginApproval" &&
           objectFieldEquals(entry, "decision", "allow-once"),
       );
       await fixture.run.waitForOutput("PTY_WORLD_CHALLENGE: scan this verifier challenge");
-      await fixture.waitForLogEntry(
-        (entry) =>
-          entry.method === "prepareExternalPluginApproval" &&
-          objectFieldEquals(entry, "intent", "retry"),
-      );
 
       await fixture.run.write("\r");
       await fixture.waitForLogEntry(
