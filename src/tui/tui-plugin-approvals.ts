@@ -319,6 +319,11 @@ function parseTuiPluginApproval(payload: unknown): TuiPluginApproval | null {
   if (!id || !title || !createdAtMs || !expiresAtMs) {
     return null;
   }
+  const rawExternalResolution = payload.request.externalResolution;
+  const externalResolution = parseExternalResolution(rawExternalResolution);
+  if (rawExternalResolution != null && !externalResolution) {
+    return null;
+  }
   return {
     id,
     request: {
@@ -329,7 +334,7 @@ function parseTuiPluginApproval(payload: unknown): TuiPluginApproval | null {
       severity: parseSeverity(payload.request.severity),
       toolName: typeof payload.request.toolName === "string" ? payload.request.toolName : null,
       allowedDecisions: parseAllowedDecisions(payload.request.allowedDecisions),
-      externalResolution: parseExternalResolution(payload.request.externalResolution),
+      externalResolution,
       agentId: typeof payload.request.agentId === "string" ? payload.request.agentId : null,
       sessionKey:
         typeof payload.request.sessionKey === "string" ? payload.request.sessionKey : null,

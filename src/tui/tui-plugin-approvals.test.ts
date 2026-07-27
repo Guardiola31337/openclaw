@@ -387,6 +387,27 @@ describe("TUI plugin approvals", () => {
     expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed external verification metadata instead of exposing generic allows", () => {
+    const harness = createHarness();
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-invalid-external",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: undefined,
+          externalResolution: {
+            label: "Verify with World",
+            decisions: [],
+          },
+        },
+      }),
+    );
+
+    expect(harness.openOverlay).not.toHaveBeenCalled();
+    expect(harness.selectors).toHaveLength(0);
+  });
+
   it("does not invent denial when an external approval explicitly omits it", () => {
     const harness = createHarness();
     harness.controller.handleEvent(
