@@ -41,6 +41,11 @@ type FencedPresentation = {
   fallback: string;
 };
 
+type CompactPresentation = {
+  challenge: string;
+  fallback: string;
+};
+
 function compactPresentationText(text: string): string {
   const compact = sanitizeApprovalText(text);
   const characters = Array.from(compact);
@@ -71,17 +76,22 @@ function extractLatestFencedPresentation(
   return latest;
 }
 
-function formatCompactPresentation(presentations: readonly string[]): string {
+function formatCompactPresentation(presentations: readonly string[]): CompactPresentation {
   const fenced = extractLatestFencedPresentation(presentations);
   if (fenced !== null) {
-    const content = fenced.content
-      .split("\n")
-      .map((line) => `${TERMINAL_BLACK_ON_WHITE}${line}${TERMINAL_RESET}`)
-      .join("\n");
-    return fenced.fallback ? `${fenced.fallback}\n${content}` : content;
+    return {
+      challenge: fenced.content
+        .split("\n")
+        .map((line) => `${TERMINAL_BLACK_ON_WHITE}${line}${TERMINAL_RESET}`)
+        .join("\n"),
+      fallback: fenced.fallback,
+    };
   }
   const latest = presentations.at(-1);
-  return latest ? compactPresentationText(latest) : "";
+  return {
+    challenge: "",
+    fallback: latest ? compactPresentationText(latest) : "",
+  };
 }
 
 class PluginApprovalPrompt implements Component {
@@ -90,6 +100,10 @@ class PluginApprovalPrompt implements Component {
   private readonly description: Text;
   private readonly externalResolution: Text;
   private readonly challenge: Text;
+  private readonly challengeFallback: Text;
+  private readonly challengeOverflow = new Text(
+    theme.system("Full challenge is in chat. Press Escape to scan it."),
+  );
   private readonly confirmation = new Text();
 
   constructor(
@@ -121,7 +135,9 @@ class PluginApprovalPrompt implements Component {
     this.metadata = new Text(theme.dim(metadata.join("\n")));
     this.description = new Text(theme.system(description ? `Request: ${description}` : ""));
     this.externalResolution = new Text(theme.system(externalLines.join("\n")));
-    this.challenge = new Text(formatCompactPresentation(presentations));
+    const presentation = formatCompactPresentation(presentations);
+    this.challenge = new Text(presentation.challenge);
+    this.challengeFallback = new Text(presentation.fallback);
   }
 
   setConfirmation(text: string): void {
@@ -134,12 +150,15 @@ class PluginApprovalPrompt implements Component {
     this.description.invalidate();
     this.externalResolution.invalidate();
     this.challenge.invalidate();
+    this.challengeFallback.invalidate();
+    this.challengeOverflow.invalidate();
     this.confirmation.invalidate();
     this.selector.invalidate();
   }
 
   render(width: number): string[] {
     const challenge = this.challenge.render(width);
+    const challengeFallback = this.challengeFallback.render(width);
     const confirmation = this.confirmation.render(width);
     const selector = this.selector.render(width);
     const title = this.title.render(width);
@@ -157,23 +176,42 @@ class PluginApprovalPrompt implements Component {
         ...selector,
         ...(confirmation.some((line) => line.trim()) ? confirmation : []),
       ];
-      const contextBudget = Math.max(0, MAX_APPROVAL_PROMPT_ROWS - controls.length - 1);
-      const visibleContext = context.slice(0, contextBudget);
-      const challengeBudget = Math.max(
-        1,
-        MAX_APPROVAL_PROMPT_ROWS - visibleContext.length - controls.length,
+      const challengeBudget = MAX_APPROVAL_PROMPT_ROWS - controls.length - challengeFallback.length;
+      if (challenge.length <= challengeBudget) {
+        const contextBudget = Math.max(0, challengeBudget - challenge.length);
+        return [
+          ...context.slice(0, contextBudget),
+          ...controls,
+          ...challengeFallback,
+          ...challenge,
+        ];
+      }
+      const overflow = this.challengeOverflow.render(width);
+      const fallback =
+        challengeFallback.length + overflow.length <= MAX_APPROVAL_PROMPT_ROWS - controls.length
+          ? challengeFallback
+          : [];
+      const contextBudget = Math.max(
+        0,
+        MAX_APPROVAL_PROMPT_ROWS - controls.length - fallback.length - overflow.length,
       );
-      // Keep authorization context and actions above a potentially tall QR.
-      // The challenge fallback is first, and the complete presentation stays in chat.
-      return [...visibleContext, ...controls, ...challenge.slice(0, challengeBudget)];
+      const visibleContext = context.slice(0, contextBudget);
+      // A cropped QR is invalid. Keep a complete fallback when it fits and direct
+      // users to the full pending presentation in chat for oversized challenges.
+      return [...visibleContext, ...controls, ...fallback, ...overflow];
     }
     if (externalResolution.some((line) => line.trim())) {
       const controls = [
         ...(confirmation.some((line) => line.trim()) ? confirmation : []),
         ...selector,
       ];
-      const contextBudget = Math.max(0, MAX_APPROVAL_PROMPT_ROWS - controls.length);
-      return [...context.slice(0, contextBudget), ...controls];
+      const fallbackBudget = Math.max(0, MAX_APPROVAL_PROMPT_ROWS - controls.length);
+      const fallback = challengeFallback.slice(0, fallbackBudget);
+      const contextBudget = Math.max(
+        0,
+        MAX_APPROVAL_PROMPT_ROWS - controls.length - fallback.length,
+      );
+      return [...context.slice(0, contextBudget), ...controls, ...fallback];
     }
     return [
       ...context,
@@ -478,7 +516,9 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       ? approval.request.allowedDecisions === undefined
         ? (["deny"] as const)
         : approval.request.allowedDecisions.filter((decision) => decision === "deny")
-      : (approval.request.allowedDecisions ?? DEFAULT_DECISIONS);
+      : approval.request.allowedDecisions?.length
+        ? approval.request.allowedDecisions
+        : DEFAULT_DECISIONS;
     const canDispatchExternal = Boolean(
       deps.client.prepareExternalPluginApproval && deps.client.startExternalPluginApproval,
     );

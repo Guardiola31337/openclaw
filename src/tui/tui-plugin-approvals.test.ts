@@ -439,6 +439,28 @@ describe("TUI plugin approvals", () => {
     expect(harness.selectors[0]?.items.map((item) => item.value)).toEqual(["external:allow-once"]);
   });
 
+  it.each([[], ["unsupported"]])(
+    "keeps generic approvals actionable when allowedDecisions is %j",
+    (allowedDecisions) => {
+      const harness = createHarness();
+      harness.controller.handleEvent(
+        "plugin.approval.requested",
+        approvalPayload({
+          request: {
+            ...approvalPayload().request,
+            allowedDecisions,
+          },
+        }),
+      );
+
+      expect(harness.selectors[0]?.items.map((item) => item.value)).toEqual([
+        "allow-once",
+        "allow-always",
+        "deny",
+      ]);
+    },
+  );
+
   it("keeps fail-closed choices visible above a terminal QR at 80x24", async () => {
     const harness = createHarness();
     const qrLines = Array.from(
@@ -493,15 +515,58 @@ describe("TUI plugin approvals", () => {
     expect(rendered).toContain("workspace skill approval:");
     expect(rendered).toContain("Severity: Warning");
     expect(rendered).toContain("Plugin: workspace-skills");
-    expect(rendered.indexOf("Verify once")).toBeLessThan(rendered.indexOf("QR row 1"));
     expect(rendered).toContain("Deny");
     expect(rendered).toContain("worldapp://verify/example");
-    expect(rendered.indexOf("worldapp://verify/example")).toBeLessThan(
-      rendered.indexOf("QR row 1"),
-    );
-    expect(rendered).toContain("QR row 1");
+    expect(rendered).toContain("Full challenge is in chat. Press Escape to scan it.");
+    expect(rendered).not.toContain("QR row 1");
     expect(rendered).not.toContain("\u202e");
     expect(rendered).not.toContain("QR row 200");
+  });
+
+  it("never renders a partial QR when no compact fallback is available", async () => {
+    const harness = createHarness();
+    const qrLines = Array.from({ length: 200 }, (_, index) => ` QR row ${index + 1} `);
+    harness.startExternalPluginApproval.mockResolvedValueOnce({
+      outcome: "started",
+      presentations: [["```text", ...qrLines, "```"].join("\n")],
+    });
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-qr-only",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.openOverlay).toHaveBeenCalledTimes(2);
+    });
+
+    const challengePrompt = harness.openOverlay.mock.calls[1]?.[0];
+    const rendered = stripAnsi(
+      expectDefined(challengePrompt, "challenge prompt test invariant").render(80).join("\n"),
+    );
+    expect(rendered).toContain("Full challenge is in chat. Press Escape to scan it.");
+    expect(rendered).not.toContain("QR row 1");
+    expect(harness.addPendingSystem).toHaveBeenCalledWith(
+      "plugin-external-verification:plugin:world-qr-only",
+      expect.stringContaining("QR row 200"),
+    );
   });
 
   it("does not dispatch after the approval resolves during action preparation", async () => {
