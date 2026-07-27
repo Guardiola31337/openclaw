@@ -591,7 +591,9 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
           );
         }
       } catch (error) {
-        deps.chatLog.addSystem(`${surfaceLabel} failed: ${formatErrorMessage(error)}`);
+        if (!disposed && queue.some((candidate) => candidate.id === approval.id)) {
+          deps.chatLog.addSystem(`${surfaceLabel} failed: ${formatErrorMessage(error)}`);
+        }
       }
       resolvingIds.delete(approval.id);
       presentNext();

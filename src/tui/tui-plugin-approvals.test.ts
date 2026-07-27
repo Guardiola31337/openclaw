@@ -33,10 +33,12 @@ function approvalPayload(overrides: Record<string, unknown> = {}) {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 function createHarness() {
@@ -579,6 +581,84 @@ describe("TUI plugin approvals", () => {
       expect(harness.requestRender.mock.calls.length).toBeGreaterThan(renderCountAfterResolution);
     });
     expect(harness.addPendingSystem).not.toHaveBeenCalled();
+  });
+
+  it("suppresses verifier failure after another reviewer resolves the approval", async () => {
+    const harness = createHarness();
+    const pending = deferred<{ outcome: "started"; presentations: string[] }>();
+    harness.startExternalPluginApproval.mockReturnValueOnce(pending.promise);
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-fails-after-resolution",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.startExternalPluginApproval).toHaveBeenCalledOnce();
+    });
+    harness.controller.handleEvent("plugin.approval.resolved", {
+      id: "plugin:world-fails-after-resolution",
+    });
+
+    pending.reject(new Error("late verifier failure"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(harness.addSystem).not.toHaveBeenCalled();
+  });
+
+  it("suppresses verifier failure after the controller is disposed", async () => {
+    const harness = createHarness();
+    const pending = deferred<{ outcome: "started"; presentations: string[] }>();
+    harness.startExternalPluginApproval.mockReturnValueOnce(pending.promise);
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-fails-after-dispose",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.startExternalPluginApproval).toHaveBeenCalledOnce();
+    });
+    harness.controller.dispose();
+
+    pending.reject(new Error("late verifier failure"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(harness.addSystem).not.toHaveBeenCalled();
   });
 
   it("reopens with a fresh action instead of rendering a stale-action response", async () => {
