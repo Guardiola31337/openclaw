@@ -58,6 +58,14 @@ function createHarness() {
   });
   const requestRender = vi.fn();
   const resolvePluginApproval = vi.fn().mockResolvedValue({ ok: true });
+  const prepareExternalPluginApproval = vi.fn().mockResolvedValue({
+    intent: "start",
+    actionToken: "action-1",
+  });
+  const startExternalPluginApproval = vi.fn().mockResolvedValue({
+    outcome: "started",
+    presentations: ["Scan this challenge"],
+  });
   const listPluginApprovals = vi.fn().mockResolvedValue([]);
   const clearTimeoutFn = vi.fn();
   const timers: Array<{ unref: ReturnType<typeof vi.fn> }> = [];
@@ -70,7 +78,12 @@ function createHarness() {
   let sessionKey = "agent:main:main";
   let now = 1_000;
   const controller = createTuiPluginApprovalController({
-    client: { listPluginApprovals, resolvePluginApproval },
+    client: {
+      listPluginApprovals,
+      prepareExternalPluginApproval,
+      resolvePluginApproval,
+      startExternalPluginApproval,
+    },
     chatLog: { addSystem },
     getAgentId: () => agentId,
     getSessionKey: () => sessionKey,
@@ -81,7 +94,7 @@ function createHarness() {
       const selector = {
         items,
         setSelectedIndex: vi.fn<(index: number) => void>(),
-        render: () => [],
+        render: () => items.map((item) => item.label),
         handleInput: () => undefined,
         invalidate: () => undefined,
       } satisfies TestSelector;
@@ -101,6 +114,8 @@ function createHarness() {
     overlayHandles,
     requestRender,
     resolvePluginApproval,
+    prepareExternalPluginApproval,
+    startExternalPluginApproval,
     listPluginApprovals,
     clearTimeoutFn,
     setTimeoutFn,
@@ -283,6 +298,298 @@ describe("TUI plugin approvals", () => {
 
     harness.controller.sessionChanged();
     expect(harness.openOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders and dispatches canonical external verification choices", async () => {
+    const harness = createHarness();
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-1",
+        request: {
+          ...approvalPayload().request,
+          title: "World proof required for exec",
+          pluginId: "openclaw-agentkit",
+          toolName: "exec",
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once", "allow-always"],
+          },
+        },
+      }),
+    );
+
+    const prompt = harness.openOverlay.mock.calls[0]?.[0];
+    const renderedPrompt = stripAnsi(
+      expectDefined(prompt, "prompt test invariant").render(100).join("\n"),
+    );
+    expect(renderedPrompt).toContain("Verify with World");
+    expect(renderedPrompt).not.toContain("/approve");
+    expect(renderedPrompt).toContain("Press Escape to dismiss; the request remains pending.");
+    expect(harness.selectors[0]?.items.map((item) => item.value)).toEqual([
+      "external:allow-once",
+      "external:allow-always",
+      "deny",
+    ]);
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+
+    await vi.waitFor(() => {
+      expect(harness.startExternalPluginApproval).toHaveBeenCalledWith(
+        "plugin:world-1",
+        "allow-once",
+        "action-1",
+      );
+    });
+    expect(harness.prepareExternalPluginApproval).toHaveBeenCalledWith(
+      "plugin:world-1",
+      "allow-once",
+    );
+    expect(harness.addSystem).toHaveBeenCalledWith("Scan this challenge");
+    expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
+    expect(harness.closeOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps fail-closed choices visible above a terminal QR at 80x24", async () => {
+    const harness = createHarness();
+    const qrLines = Array.from({ length: 200 }, (_, index) => ` QR row ${index + 1} `);
+    harness.startExternalPluginApproval.mockResolvedValueOnce({
+      outcome: "started",
+      presentations: [
+        [
+          "Verify with World",
+          "Scan with World App",
+          "```text",
+          ...qrLines,
+          "```",
+          "Link: worldapp://verify/example",
+        ].join("\n"),
+      ],
+    });
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-qr",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.openOverlay).toHaveBeenCalledTimes(2);
+    });
+
+    const challengePrompt = harness.openOverlay.mock.calls[1]?.[0];
+    const lines = expectDefined(challengePrompt, "challenge prompt test invariant").render(80);
+    const rendered = stripAnsi(lines.join("\n"));
+    expect(lines.length).toBeLessThanOrEqual(24);
+    expect(rendered.indexOf("Verify once")).toBeLessThan(rendered.indexOf("QR row 1"));
+    expect(rendered).toContain("Deny");
+    expect(rendered).toContain("QR row 20");
+    expect(rendered).not.toContain("QR row 21");
+    expect(rendered).not.toContain("QR row 200");
+    expect(rendered).not.toContain("worldapp://verify/example");
+  });
+
+  it("dismisses external verification without denying", () => {
+    const harness = createHarness();
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onCancel?.();
+
+    expect(harness.startExternalPluginApproval).not.toHaveBeenCalled();
+    expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
+    expect(harness.addSystem).toHaveBeenCalledWith(
+      "workspace skill approval: dismissed; request remains pending",
+    );
+  });
+
+  it("reopens external verification with a fresh action after setup failure", async () => {
+    const harness = createHarness();
+    harness.prepareExternalPluginApproval
+      .mockResolvedValueOnce({ intent: "start", actionToken: "action-1" })
+      .mockResolvedValueOnce({ intent: "start", actionToken: "action-2" });
+    harness.startExternalPluginApproval
+      .mockRejectedValueOnce(new Error("broker unavailable"))
+      .mockResolvedValueOnce({
+        outcome: "started",
+        presentations: ["Scan replacement challenge"],
+      });
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-1",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.selectors).toHaveLength(2);
+    });
+    expect(harness.addSystem).toHaveBeenCalledWith(
+      "workspace skill approval failed: broker unavailable",
+    );
+
+    harness.selectors[1]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[1]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.startExternalPluginApproval).toHaveBeenNthCalledWith(
+        2,
+        "plugin:world-1",
+        "allow-once",
+        "action-2",
+      );
+    });
+    expect(harness.addSystem).toHaveBeenCalledWith("Scan replacement challenge");
+    expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
+  });
+
+  it("clears a previous challenge before a failed retry", async () => {
+    const harness = createHarness();
+    harness.prepareExternalPluginApproval
+      .mockResolvedValueOnce({ intent: "start", actionToken: "action-1" })
+      .mockResolvedValueOnce({ intent: "retry", actionToken: "action-2" });
+    harness.startExternalPluginApproval
+      .mockResolvedValueOnce({
+        outcome: "started",
+        presentations: ["Old challenge must not survive retry"],
+      })
+      .mockRejectedValueOnce(new Error("retry unavailable"));
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-1",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.openOverlay).toHaveBeenCalledTimes(2);
+    });
+    expect(
+      stripAnsi(
+        expectDefined(harness.openOverlay.mock.calls[1]?.[0], "challenge prompt test invariant")
+          .render(80)
+          .join("\n"),
+      ),
+    ).toContain("Old challenge must not survive retry");
+
+    harness.selectors[1]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[1]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.openOverlay).toHaveBeenCalledTimes(3);
+    });
+    expect(
+      stripAnsi(
+        expectDefined(harness.openOverlay.mock.calls[2]?.[0], "retry prompt test invariant")
+          .render(80)
+          .join("\n"),
+      ),
+    ).not.toContain("Old challenge must not survive retry");
+    expect(harness.addSystem).toHaveBeenCalledWith(
+      "workspace skill approval failed: retry unavailable",
+    );
+  });
+
+  it("keeps explicit denial available for external verification approvals", async () => {
+    const harness = createHarness();
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-1",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelect?.({ value: "deny", label: "Deny" });
+
+    await vi.waitFor(() => {
+      expect(harness.resolvePluginApproval).toHaveBeenCalledWith("plugin:world-1", "deny");
+    });
+    expect(harness.addSystem).toHaveBeenLastCalledWith("workspace skill approval: denied");
   });
 
   it("requires a visible second confirmation for allow-only approvals", async () => {

@@ -40,7 +40,10 @@ import type {
   TuiAgentsList,
   TuiBackend,
   TuiEvent,
+  TuiExternalApprovalDecision,
+  TuiExternalApprovalStartResult,
   TuiModelChoice,
+  TuiPreparedExternalApprovalAction,
   TuiApprovalDecision,
   TuiSessionList,
   TuiSessionCreateOptions,
@@ -372,6 +375,27 @@ export class GatewayChatClient implements TuiBackend {
 
   async listPluginApprovals() {
     return await this.client.request("plugin.approval.list", {});
+  }
+
+  async prepareExternalPluginApproval(
+    id: string,
+    decision: TuiExternalApprovalDecision,
+  ): Promise<TuiPreparedExternalApprovalAction> {
+    return await this.client.request<TuiPreparedExternalApprovalAction>(
+      "plugin.approval.external.prepare",
+      { id, decision },
+    );
+  }
+
+  async startExternalPluginApproval(
+    id: string,
+    decision: TuiExternalApprovalDecision,
+    actionToken: string,
+  ): Promise<TuiExternalApprovalStartResult> {
+    return await this.client.request<TuiExternalApprovalStartResult>(
+      "plugin.approval.external.start",
+      { id, decision, actionToken },
+    );
   }
 
   async resolvePluginApproval(id: string, decision: TuiApprovalDecision) {

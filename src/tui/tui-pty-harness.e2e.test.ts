@@ -104,14 +104,21 @@ async function writeTuiPtyFixtureScript(dir: string) {
         request: {
           title: string;
           description: string;
+          pluginId?: string;
+          severity?: string;
           toolName: string;
           allowedDecisions: string[];
+          externalResolution?: {
+            label: string;
+            decisions: Array<"allow-once" | "allow-always">;
+          };
           sessionKey: string;
         };
         createdAtMs: number;
         expiresAtMs: number;
       } | null = null;
       let pendingPluginApprovalRun: { runId: string; sessionKey: string } | null = null;
+      let externalAttemptActive = false;
       let pendingTaskSuggestion: {
         id: string;
         title: string;
@@ -190,16 +197,31 @@ async function writeTuiPtyFixtureScript(dir: string) {
             thinking: opts.thinking,
           });
           const runId = opts.runId ?? "run-pty-fixture";
-          if (opts.message === "skill approval proof" || opts.message === "skill approval gap proof") {
+          if (
+            opts.message === "skill approval proof" ||
+            opts.message === "skill approval gap proof" ||
+            opts.message === "external approval proof"
+          ) {
+            const external = opts.message === "external approval proof";
             pendingPluginApproval = {
-              id: "plugin:skill-pty",
+              id: external ? "plugin:world-pty" : "plugin:skill-pty",
               request: {
-                title: "Apply workspace skill proposal",
-                description: "Apply a pending workspace skill proposal into live workspace skills.",
-                pluginId: "workspace-skills",
+                title: external ? "World proof required for exec" : "Apply workspace skill proposal",
+                description: external
+                  ? "Verify personhood before the blocked command can run."
+                  : "Apply a pending workspace skill proposal into live workspace skills.",
+                pluginId: external ? "openclaw-agentkit" : "workspace-skills",
                 severity: "warning",
-                toolName: "skill_workshop",
-                allowedDecisions: ["allow-once", "deny"],
+                toolName: external ? "exec" : "skill_workshop",
+                allowedDecisions: external ? ["deny"] : ["allow-once", "deny"],
+                ...(external
+                  ? {
+                      externalResolution: {
+                        label: "Verify with World",
+                        decisions: ["allow-once"],
+                      },
+                    }
+                  : {}),
                 sessionKey: opts.sessionKey,
               },
               createdAtMs: Date.now(),
@@ -432,11 +454,35 @@ async function writeTuiPtyFixtureScript(dir: string) {
           return pendingPluginApproval ? [pendingPluginApproval] : [];
         }
 
+        async prepareExternalPluginApproval(
+          id: string,
+          decision: "allow-once" | "allow-always",
+        ) {
+          const intent = externalAttemptActive ? "retry" : "start";
+          const actionToken = intent + ":" + id + ":" + decision;
+          record("prepareExternalPluginApproval", { id, decision, intent, actionToken });
+          return { intent, actionToken };
+        }
+
+        async startExternalPluginApproval(
+          id: string,
+          decision: "allow-once" | "allow-always",
+          actionToken: string,
+        ) {
+          record("startExternalPluginApproval", { id, decision, actionToken });
+          externalAttemptActive = true;
+          return {
+            outcome: "started",
+            presentations: ["PTY_WORLD_CHALLENGE: scan this verifier challenge"],
+          };
+        }
+
         async resolvePluginApproval(id: string, decision: "allow-once" | "allow-always" | "deny") {
           record("resolvePluginApproval", { id, decision });
           const pendingRun = pendingPluginApprovalRun;
           pendingPluginApproval = null;
           pendingPluginApprovalRun = null;
+          externalAttemptActive = false;
           this.onEvent?.({
             event: "plugin.approval.resolved",
             payload: { id, decision },
@@ -760,6 +806,42 @@ describe.sequential("TUI PTY harness", () => {
           objectFieldEquals(entry, "decision", "allow-once"),
       );
       await fixture.run.waitForOutput("PTY_SKILL_APPROVAL_RESOLVED: allow-once");
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "starts external verification through the native TUI control lane and keeps deny available",
+    async () => {
+      await fixture.run.write("external approval proof\r");
+      await fixture.run.waitForOutput("plugin approval: World proof required for exec");
+      await fixture.run.waitForOutput("Verify with World");
+      await fixture.waitForLogEntry(
+        (entry) =>
+          entry.method === "prepareExternalPluginApproval" &&
+          objectFieldEquals(entry, "intent", "start"),
+      );
+
+      await fixture.run.write("\x1b[A", { delay: false });
+      await fixture.run.write("\r");
+      await fixture.waitForLogEntry(
+        (entry) =>
+          entry.method === "startExternalPluginApproval" &&
+          objectFieldEquals(entry, "decision", "allow-once"),
+      );
+      await fixture.run.waitForOutput("PTY_WORLD_CHALLENGE: scan this verifier challenge");
+      await fixture.waitForLogEntry(
+        (entry) =>
+          entry.method === "prepareExternalPluginApproval" &&
+          objectFieldEquals(entry, "intent", "retry"),
+      );
+
+      await fixture.run.write("\r");
+      await fixture.waitForLogEntry(
+        (entry) =>
+          entry.method === "resolvePluginApproval" && objectFieldEquals(entry, "decision", "deny"),
+      );
+      await fixture.run.waitForOutput("PTY_SKILL_APPROVAL_RESOLVED: deny");
     },
     TEST_TIMEOUT_MS,
   );
