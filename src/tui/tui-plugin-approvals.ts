@@ -55,7 +55,7 @@ function extractLatestFencedPresentation(
 ): FencedPresentation | null {
   let latest: FencedPresentation | null = null;
   for (const presentation of presentations) {
-    const sanitized = sanitizeRenderableText(presentation);
+    const sanitized = sanitizeRenderableText(presentation).replace(APPROVAL_BIDI_CONTROL_RE, "");
     FENCED_PRESENTATION_RE.lastIndex = 0;
     for (
       let match = FENCED_PRESENTATION_RE.exec(sanitized);
@@ -205,6 +205,8 @@ type TuiPluginApprovalControllerDeps = {
   >;
   chatLog: {
     addSystem: (line: string) => void;
+    addPendingSystem: (id: string, line: string) => void;
+    dismissPendingSystem: (id: string) => boolean;
   };
   getAgentId: () => string;
   getSessionKey: () => string;
@@ -387,6 +389,8 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
   const resolvingIds = new Set<string>();
   const dismissedIds = new Set<string>();
   const externalPresentations = new Map<string, string[]>();
+  const externalPresentationId = (approvalId: string) =>
+    `plugin-external-verification:${approvalId}`;
 
   const clearExpiryTimer = () => {
     if (expiryTimer !== null) {
@@ -411,10 +415,15 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
     mutations.set(id, { version: mutationVersion, approval });
   };
 
+  const clearExternalPresentation = (id: string) => {
+    externalPresentations.delete(id);
+    deps.chatLog.dismissPendingSystem(externalPresentationId(id));
+  };
+
   const remove = (id: string, record = true) => {
     queue = queue.filter((approval) => approval.id !== id);
     dismissedIds.delete(id);
-    externalPresentations.delete(id);
+    clearExternalPresentation(id);
     if (record) {
       recordMutation(id, null);
     }
@@ -567,7 +576,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       activeId = null;
       resolvingIds.add(approval.id);
       closeActiveOverlay();
-      externalPresentations.delete(approval.id);
+      clearExternalPresentation(approval.id);
       deps.requestRender();
       try {
         const prepared = await preparedActions.get(decision);
@@ -587,9 +596,10 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
         );
         if (result.presentations.length > 0) {
           externalPresentations.set(approval.id, result.presentations);
-        }
-        for (const presentation of result.presentations) {
-          deps.chatLog.addSystem(presentation);
+          deps.chatLog.addPendingSystem(
+            externalPresentationId(approval.id),
+            result.presentations.join("\n\n"),
+          );
         }
       } catch (error) {
         deps.chatLog.addSystem(`${surfaceLabel} failed: ${formatErrorMessage(error)}`);
@@ -791,6 +801,9 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       clearExpiryTimer();
       queue = [];
       dismissedIds.clear();
+      for (const id of externalPresentations.keys()) {
+        deps.chatLog.dismissPendingSystem(externalPresentationId(id));
+      }
       externalPresentations.clear();
       mutations.clear();
       resolvingIds.clear();

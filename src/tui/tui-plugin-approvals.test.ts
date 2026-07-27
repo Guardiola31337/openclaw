@@ -42,6 +42,8 @@ function deferred<T>() {
 function createHarness() {
   const selectors: TestSelector[] = [];
   const addSystem = vi.fn();
+  const addPendingSystem = vi.fn();
+  const dismissPendingSystem = vi.fn(() => true);
   const closeOverlay = vi.fn();
   const overlayHandles: OverlayHandle[] = [];
   const openOverlay = vi.fn((_component: Component) => {
@@ -84,7 +86,7 @@ function createHarness() {
       resolvePluginApproval,
       startExternalPluginApproval,
     },
-    chatLog: { addSystem },
+    chatLog: { addSystem, addPendingSystem, dismissPendingSystem },
     getAgentId: () => agentId,
     getSessionKey: () => sessionKey,
     openOverlay,
@@ -109,6 +111,8 @@ function createHarness() {
     controller,
     selectors,
     addSystem,
+    addPendingSystem,
+    dismissPendingSystem,
     closeOverlay,
     openOverlay,
     overlayHandles,
@@ -358,7 +362,10 @@ describe("TUI plugin approvals", () => {
       "plugin:world-1",
       "allow-once",
     );
-    expect(harness.addSystem).toHaveBeenCalledWith("Scan this challenge");
+    expect(harness.addPendingSystem).toHaveBeenCalledWith(
+      "plugin-external-verification:plugin:world-1",
+      "Scan this challenge",
+    );
     expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
     expect(harness.closeOverlay).toHaveBeenCalledTimes(1);
   });
@@ -430,7 +437,10 @@ describe("TUI plugin approvals", () => {
 
   it("keeps fail-closed choices visible above a terminal QR at 80x24", async () => {
     const harness = createHarness();
-    const qrLines = Array.from({ length: 200 }, (_, index) => ` QR row ${index + 1} `);
+    const qrLines = Array.from(
+      { length: 200 },
+      (_, index) => ` QR row ${index + 1}${index === 0 ? "\u202e" : ""} `,
+    );
     harness.startExternalPluginApproval.mockResolvedValueOnce({
       outcome: "started",
       presentations: [
@@ -486,6 +496,7 @@ describe("TUI plugin approvals", () => {
       rendered.indexOf("QR row 1"),
     );
     expect(rendered).toContain("QR row 1");
+    expect(rendered).not.toContain("\u202e");
     expect(rendered).not.toContain("QR row 200");
   });
 
@@ -571,7 +582,10 @@ describe("TUI plugin approvals", () => {
         "action-2",
       );
     });
-    expect(harness.addSystem).toHaveBeenCalledWith("Scan replacement challenge");
+    expect(harness.addPendingSystem).toHaveBeenCalledWith(
+      "plugin-external-verification:plugin:world-1",
+      "Scan replacement challenge",
+    );
     expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
   });
 
@@ -631,6 +645,9 @@ describe("TUI plugin approvals", () => {
     await vi.waitFor(() => {
       expect(harness.openOverlay).toHaveBeenCalledTimes(3);
     });
+    expect(harness.dismissPendingSystem).toHaveBeenCalledWith(
+      "plugin-external-verification:plugin:world-1",
+    );
     expect(
       stripAnsi(
         expectDefined(harness.openOverlay.mock.calls[2]?.[0], "retry prompt test invariant")
