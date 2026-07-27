@@ -462,7 +462,9 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
 
     const externalDecisions = approval.request.externalResolution?.decisions ?? [];
     const decisions = approval.request.externalResolution
-      ? (["deny"] as const)
+      ? approval.request.allowedDecisions === undefined
+        ? (["deny"] as const)
+        : approval.request.allowedDecisions.filter((decision) => decision === "deny")
       : (approval.request.allowedDecisions ?? DEFAULT_DECISIONS);
     const canDispatchExternal = Boolean(
       deps.client.prepareExternalPluginApproval && deps.client.startExternalPluginApproval,

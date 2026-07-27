@@ -387,6 +387,26 @@ describe("TUI plugin approvals", () => {
     expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
   });
 
+  it("does not invent denial when an external approval explicitly omits it", () => {
+    const harness = createHarness();
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-external-only",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["allow-once"],
+          externalResolution: {
+            label: "Verify with World",
+            decisions: ["allow-once"],
+          },
+        },
+      }),
+    );
+
+    expect(harness.selectors[0]?.items.map((item) => item.value)).toEqual(["external:allow-once"]);
+  });
+
   it("keeps fail-closed choices visible above a terminal QR at 80x24", async () => {
     const harness = createHarness();
     const qrLines = Array.from({ length: 200 }, (_, index) => ` QR row ${index + 1} `);
