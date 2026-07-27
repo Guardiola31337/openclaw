@@ -689,6 +689,11 @@ describe("PluginExternalVerificationRuntime", () => {
       grantAuthorization: { attemptId: started.id, decision: "allow-always" },
     });
     expect(publishResolution).toHaveBeenCalledTimes(1);
+    expect(publishResolution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        liveRecord: expect.objectContaining({ resolvedBy: "plugin:agentkit" }),
+      }),
+    );
     expect(logError).toHaveBeenCalledWith(
       expect.stringContaining("publication failed after durable completion: push unavailable"),
     );
