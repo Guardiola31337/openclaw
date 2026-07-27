@@ -328,6 +328,69 @@ describe("PluginExternalVerificationRuntime", () => {
     expect(handler).toHaveBeenCalledTimes(2);
   });
 
+  it("binds native action tokens and presentation replay to one reviewer device", async () => {
+    const handler = vi.fn(async (attempt: PluginExternalVerificationAttempt) => {
+      await attempt.present({ message: `Verify attempt ${attempt.id}.` });
+    });
+    createHarness(handler);
+
+    const deviceAAction = runtime!.prepareNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      reviewerDeviceId: "device-a",
+    });
+    expect(
+      runtime!.prepareNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        reviewerDeviceId: "device-a",
+      }),
+    ).toEqual(deviceAAction);
+    const deviceBAction = runtime!.prepareNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      reviewerDeviceId: "device-b",
+    });
+    expect(deviceBAction.token).not.toBe(deviceAAction.token);
+
+    await expect(
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        reviewerDeviceId: "device-b",
+        token: deviceAAction.token,
+      }),
+    ).rejects.toThrow("external verification action is invalid");
+
+    const started = await runtime!.dispatchNativeAction({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-once",
+      reviewerDeviceId: "device-a",
+      token: deviceAAction.token,
+    });
+    await expect(
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        reviewerDeviceId: "device-b",
+        token: deviceBAction.token,
+      }),
+    ).resolves.toMatchObject({
+      outcome: "stale-action",
+      attempt: { id: started.attempt.id },
+      presentations: [],
+    });
+    await expect(
+      runtime!.dispatchNativeAction({
+        approvalId: "plugin:runtime-approval",
+        decision: "allow-once",
+        reviewerDeviceId: "device-a",
+        token: deviceAAction.token,
+      }),
+    ).resolves.toEqual({ ...started, outcome: "replay" });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it("rejects a stale weaker native action after a stronger attempt starts", async () => {
     const handler = vi.fn(async (attempt: PluginExternalVerificationAttempt) => {
       await attempt.present({ message: `Verify attempt ${attempt.id}.` });

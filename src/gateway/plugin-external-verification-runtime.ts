@@ -53,12 +53,14 @@ type LiveAttempt = {
   presentations: string[];
   pluginId: string;
   ready: boolean;
+  reviewerDeviceId?: string;
   verifierOwner: object;
 };
 
 type AttemptSetup = {
   approvalId: string;
   presentations: string[];
+  reviewerDeviceId?: string;
   promise: Promise<{
     outcome: "started";
     attempt: PluginExternalVerificationAttemptSnapshot;
@@ -72,6 +74,7 @@ type NativeAction = {
   interactionId: string;
   intent: "start" | "retry";
   pluginId: string;
+  reviewerDeviceId?: string;
   token: string;
   verifierOwner: object;
 };
@@ -320,8 +323,13 @@ export class PluginExternalVerificationRuntime {
         databaseOptions: this.params.databaseOptions,
       });
       const replaySnapshot = current ? snapshotAttemptWithRecord(current, record) : attemptSnapshot;
+      const live = this.liveAttempts.get(attemptSnapshot.id);
       const presentations =
-        setup?.presentations ?? this.liveAttempts.get(attemptSnapshot.id)?.presentations ?? [];
+        setup && setup.reviewerDeviceId === params.reviewerDeviceId
+          ? setup.presentations
+          : live && live.reviewerDeviceId === params.reviewerDeviceId
+            ? live.presentations
+            : [];
       if (!replaySnapshot.outcome) {
         for (const presentation of presentations) {
           await params.present(presentation);
@@ -404,6 +412,7 @@ export class PluginExternalVerificationRuntime {
       presentations: [],
       pluginId: attempt.context.pluginId,
       ready: false,
+      reviewerDeviceId: params.reviewerDeviceId,
       verifierOwner: verifier.owner,
     });
     const readPluginCompletion = (): PluginExternalVerificationAttemptSnapshot | null => {
@@ -454,6 +463,7 @@ export class PluginExternalVerificationRuntime {
     this.attemptSetups.set(attempt.id, {
       approvalId: attempt.context.approvalId,
       presentations: this.liveAttempts.get(attempt.id)?.presentations ?? [],
+      reviewerDeviceId: params.reviewerDeviceId,
       promise: setupPromise,
     });
     return await setupPromise;
@@ -490,6 +500,7 @@ export class PluginExternalVerificationRuntime {
       state.action.intent,
       state.action.expectedAttemptId,
       this.getVerifierOwnerId(verifier.owner),
+      params.reviewerDeviceId ?? null,
     ]);
     const existing = this.nativeActionsByGeneration.get(generation);
     if (existing) {
@@ -503,6 +514,7 @@ export class PluginExternalVerificationRuntime {
       interactionId: createHash("sha256").update(token).digest("hex"),
       intent: state.action.intent,
       pluginId,
+      reviewerDeviceId: params.reviewerDeviceId,
       token,
       verifierOwner: verifier.owner,
     };
@@ -522,6 +534,7 @@ export class PluginExternalVerificationRuntime {
       !action ||
       action.approvalId !== params.approvalId ||
       action.decision !== params.decision ||
+      action.reviewerDeviceId !== params.reviewerDeviceId ||
       this.resolveVerifier(action.pluginId)?.owner !== action.verifierOwner
     ) {
       throw new Error("external verification action is invalid");
@@ -531,7 +544,7 @@ export class PluginExternalVerificationRuntime {
       approvalId: action.approvalId,
       decision: action.decision,
       interactionId: action.interactionId,
-      reviewerDeviceId: params.reviewerDeviceId,
+      reviewerDeviceId: action.reviewerDeviceId,
       nativeAction: {
         intent: action.intent,
         expectedAttemptId: action.expectedAttemptId,
