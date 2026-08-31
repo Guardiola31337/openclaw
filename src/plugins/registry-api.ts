@@ -216,7 +216,10 @@ export function createPluginApiFactory(
       handlers: {
         ...(registrationCapabilities.capabilityHandlers
           ? {
-              ...(registrationMode === "full"
+              // Prepared-run generations load plugins in tool-discovery mode and
+              // execute their hooks during the run; without the real approvals
+              // surface those hooks fail closed at verification time.
+              ...(registrationMode === "full" || registrationMode === "tool-discovery"
                 ? {
                     approvals: {
                       onExternalVerification: (handler) => {
