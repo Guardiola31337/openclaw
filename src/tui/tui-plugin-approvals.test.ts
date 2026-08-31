@@ -580,7 +580,7 @@ describe("TUI plugin approvals", () => {
     },
   );
 
-  it("keeps fail-closed choices visible above a terminal QR at 80x24", async () => {
+  it("closes the card after a successful dispatch and routes refusal through chat", async () => {
     const harness = createHarness();
     const qrLines = Array.from(
       { length: 200 },
@@ -605,7 +605,6 @@ describe("TUI plugin approvals", () => {
         id: "plugin:world-qr",
         request: {
           ...approvalPayload().request,
-          title: "Misleading title ".repeat(200),
           allowedDecisions: ["deny"],
           externalResolution: {
             label: "Verify with World",
@@ -624,25 +623,22 @@ describe("TUI plugin approvals", () => {
       label: "Verify once",
     });
     await vi.waitFor(() => {
-      expect(harness.openOverlay).toHaveBeenCalledTimes(2);
+      expect(harness.addPendingSystem).toHaveBeenCalledWith(
+        "plugin-external-verification:plugin:world-qr",
+        expect.stringContaining("QR row 200"),
+      );
     });
 
-    const challengePrompt = harness.openOverlay.mock.calls[1]?.[0];
-    const lines = expectDefined(challengePrompt, "challenge prompt test invariant").render(80);
-    const rendered = stripAnsi(lines.join("\n"));
-    expect(lines.length).toBeLessThanOrEqual(24);
-    expect(rendered).toContain("workspace skill approval:");
-    expect(rendered).toContain("Severity: Warning");
-    expect(rendered).toContain("Plugin: workspace-skills");
-    expect(rendered).toContain("Deny");
-    expect(rendered).toContain("worldapp://verify/example");
-    expect(rendered).toContain("Full challenge is in chat. Press Escape to scan it.");
-    expect(rendered).not.toContain("QR row 1");
-    expect(rendered).not.toContain("\u202e");
-    expect(rendered).not.toContain("QR row 200");
+    // The dispatched challenge owns the approval: the card closes so the QR in
+    // chat stays scannable and a stray Enter cannot mint a replacement.
+    expect(harness.openOverlay).toHaveBeenCalledTimes(1);
+    expect(harness.closeOverlay).toHaveBeenCalled();
+    expect(harness.addSystem).toHaveBeenCalledWith(
+      expect.stringContaining("/approve plugin:world-qr deny"),
+    );
   });
 
-  it("never renders a partial QR when no compact fallback is available", async () => {
+  it("publishes the full challenge to chat instead of re-rendering it in the card", async () => {
     const harness = createHarness();
     const qrLines = Array.from({ length: 200 }, (_, index) => ` QR row ${index + 1} `);
     harness.startExternalPluginApproval.mockResolvedValueOnce({
@@ -673,19 +669,19 @@ describe("TUI plugin approvals", () => {
       label: "Verify once",
     });
     await vi.waitFor(() => {
-      expect(harness.openOverlay).toHaveBeenCalledTimes(2);
+      expect(harness.addPendingSystem).toHaveBeenCalledWith(
+        "plugin-external-verification:plugin:world-qr-only",
+        expect.stringContaining("QR row 200"),
+      );
     });
 
-    const challengePrompt = harness.openOverlay.mock.calls[1]?.[0];
-    const rendered = stripAnsi(
-      expectDefined(challengePrompt, "challenge prompt test invariant").render(80).join("\n"),
-    );
-    expect(rendered).toContain("Full challenge is in chat. Press Escape to scan it.");
-    expect(rendered).not.toContain("QR row 1");
+    // A cropped QR is invalid; the complete challenge lives in the chat log and
+    // the card never re-renders it.
     expect(harness.addPendingSystem).toHaveBeenCalledWith(
       "plugin-external-verification:plugin:world-qr-only",
-      expect.stringContaining("QR row 200"),
+      expect.stringContaining("QR row 1"),
     );
+    expect(harness.openOverlay).toHaveBeenCalledTimes(1);
   });
 
   it("does not dispatch after the approval resolves during action preparation", async () => {
@@ -940,17 +936,17 @@ describe("TUI plugin approvals", () => {
     expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
   });
 
-  it("clears a previous challenge before a failed retry", async () => {
+  it("keeps the card for retry after a failed dispatch and closes it on success", async () => {
     const harness = createHarness();
     harness.prepareExternalPluginApproval
       .mockResolvedValueOnce({ intent: "start", actionToken: "action-1" })
       .mockResolvedValueOnce({ intent: "retry", actionToken: "action-2" });
     harness.startExternalPluginApproval
+      .mockRejectedValueOnce(new Error("dispatch unavailable"))
       .mockResolvedValueOnce({
         outcome: "started",
-        presentations: ["Old challenge must not survive retry"],
-      })
-      .mockRejectedValueOnce(new Error("retry unavailable"));
+        presentations: ["Fresh challenge after retry"],
+      });
     harness.controller.handleEvent(
       "plugin.approval.requested",
       approvalPayload({
@@ -974,16 +970,13 @@ describe("TUI plugin approvals", () => {
       value: "external:allow-once",
       label: "Verify once",
     });
+    // A failed dispatch keeps deny one keypress away: the card re-presents.
     await vi.waitFor(() => {
       expect(harness.openOverlay).toHaveBeenCalledTimes(2);
     });
-    expect(
-      stripAnsi(
-        expectDefined(harness.openOverlay.mock.calls[1]?.[0], "challenge prompt test invariant")
-          .render(80)
-          .join("\n"),
-      ),
-    ).toContain("Old challenge must not survive retry");
+    expect(harness.addSystem).toHaveBeenCalledWith(
+      "workspace skill approval failed: dispatch unavailable",
+    );
 
     harness.selectors[1]?.onSelectionChange?.({
       value: "external:allow-once",
@@ -994,20 +987,15 @@ describe("TUI plugin approvals", () => {
       label: "Verify once",
     });
     await vi.waitFor(() => {
-      expect(harness.openOverlay).toHaveBeenCalledTimes(3);
+      expect(harness.addPendingSystem).toHaveBeenCalledWith(
+        "plugin-external-verification:plugin:world-1",
+        expect.stringContaining("Fresh challenge after retry"),
+      );
     });
-    expect(harness.dismissPendingSystem).toHaveBeenCalledWith(
-      "plugin-external-verification:plugin:world-1",
-    );
-    expect(
-      stripAnsi(
-        expectDefined(harness.openOverlay.mock.calls[2]?.[0], "retry prompt test invariant")
-          .render(80)
-          .join("\n"),
-      ),
-    ).not.toContain("Old challenge must not survive retry");
+    // The successful retry dispatch closes the card like any first dispatch.
+    expect(harness.openOverlay).toHaveBeenCalledTimes(2);
     expect(harness.addSystem).toHaveBeenCalledWith(
-      "workspace skill approval failed: retry unavailable",
+      expect.stringContaining("/approve plugin:world-1 deny"),
     );
   });
 

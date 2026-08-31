@@ -621,6 +621,16 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
             result.presentations.join("\n\n"),
           );
         }
+        // A successfully dispatched challenge closes the card so the QR stays
+        // scannable and a stray Enter cannot mint a replacement that voids the
+        // code mid-scan. The approval stays pending; refusal and retry stay
+        // reachable through the /approve chat commands printed with the QR
+        // (same recovery contract as an Escape dismissal). A failed dispatch
+        // keeps the card so deny remains one keypress away.
+        dismissedIds.add(approval.id);
+        deps.chatLog.addSystem(
+          `${surfaceLabel}: challenge sent — scan the QR above. Use /approve ${approval.id} deny to refuse.`,
+        );
       } catch (error) {
         if (!disposed && queue.some((candidate) => candidate.id === approval.id)) {
           deps.chatLog.addSystem(`${surfaceLabel} failed: ${formatErrorMessage(error)}`);

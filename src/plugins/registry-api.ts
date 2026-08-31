@@ -216,45 +216,41 @@ export function createPluginApiFactory(
       handlers: {
         ...(registrationCapabilities.capabilityHandlers
           ? {
-              // Prepared-run generations load plugins in tool-discovery mode and
-              // execute their hooks during the run; without the real approvals
-              // surface those hooks fail closed at verification time.
-              ...(registrationMode === "full" || registrationMode === "tool-discovery"
-                ? {
-                    approvals: {
-                      onExternalVerification: (handler) => {
-                        if (
-                          registry.externalApprovalVerifiers.some(
-                            (entry) => entry.pluginId === record.id,
-                          )
-                        ) {
-                          throw new Error(
-                            `plugin '${record.id}' registered more than one external verifier`,
-                          );
-                        }
-                        registry.externalApprovalVerifiers.push({
-                          pluginId: record.id,
-                          pluginName: record.name,
-                          owner: externalApprovalOwner,
-                          handler,
-                          source: record.source,
-                          rootDir: record.rootDir,
-                        });
-                      },
-                      completeExternalVerification: (completion) =>
-                        completeExternalVerificationForPlugin(
-                          externalApprovalOwner,
-                          record.id,
-                          completion,
-                        ),
-                      openGrantStore: () =>
-                        openExternalApprovalGrantStore({
-                          assertActive: assertExternalApprovalGrantStoreOwnerActive,
-                          pluginId: record.id,
-                        }),
-                    },
+              // Any mode that can register hooks can execute them during a run
+              // (prepared-run generations load in discovery/tool-discovery mode);
+              // without the real approvals surface those hooks fail closed at
+              // verification time. The registry side-effect guard still fences
+              // grant-store use to the registry's active lifecycle.
+              approvals: {
+                onExternalVerification: (handler) => {
+                  if (
+                    registry.externalApprovalVerifiers.some((entry) => entry.pluginId === record.id)
+                  ) {
+                    throw new Error(
+                      `plugin '${record.id}' registered more than one external verifier`,
+                    );
                   }
-                : {}),
+                  registry.externalApprovalVerifiers.push({
+                    pluginId: record.id,
+                    pluginName: record.name,
+                    owner: externalApprovalOwner,
+                    handler,
+                    source: record.source,
+                    rootDir: record.rootDir,
+                  });
+                },
+                completeExternalVerification: (completion) =>
+                  completeExternalVerificationForPlugin(
+                    externalApprovalOwner,
+                    record.id,
+                    completion,
+                  ),
+                openGrantStore: () =>
+                  openExternalApprovalGrantStore({
+                    assertActive: assertExternalApprovalGrantStoreOwnerActive,
+                    pluginId: record.id,
+                  }),
+              },
               registerTool: (tool, opts) => registerTool(record, tool, opts),
               registerHook: (events, handler, opts) =>
                 registerHook(record, events, handler, opts, params.config, params.pluginConfig),
