@@ -99,6 +99,7 @@ export async function deliverPrivateCommandReply(params: {
         accountId: target.accountId ?? undefined,
         threadId: target.threadId ?? undefined,
         cfg: params.commandParams.cfg,
+        agentId: params.commandParams.agentId,
         sessionKey: params.commandParams.sessionKey,
         policyConversationType: "direct",
         mirror: false,
@@ -107,11 +108,16 @@ export async function deliverPrivateCommandReply(params: {
       }),
     ),
   );
-  return results.some((result) => result.status === "fulfilled" && result.value.ok);
+  return results.some(
+    (result) =>
+      result.status === "fulfilled" && (result.value.delivered || result.value.suppressed === true),
+  );
 }
 
 /** Reads the command message thread id from command context. */
-export function readCommandMessageThreadId(params: HandleCommandsParams): string | undefined {
+export function readCommandMessageThreadId(
+  params: Pick<HandleCommandsParams, "ctx" | "command">,
+): string | undefined {
   return typeof params.ctx.MessageThreadId === "string" ||
     typeof params.ctx.MessageThreadId === "number"
     ? String(params.ctx.MessageThreadId)
@@ -119,7 +125,9 @@ export function readCommandMessageThreadId(params: HandleCommandsParams): string
 }
 
 /** Reads the best delivery target for command route resolution. */
-export function readCommandDeliveryTarget(params: HandleCommandsParams): string | undefined {
+export function readCommandDeliveryTarget(
+  params: Pick<HandleCommandsParams, "ctx" | "command">,
+): string | undefined {
   return (
     normalizeOptionalString(params.ctx.OriginatingTo) ??
     normalizeOptionalString(params.command.to) ??

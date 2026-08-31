@@ -1,7 +1,8 @@
 // Defines plugin approval request/resolution payloads and actions.
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { PluginExternalResolution } from "../plugins/external-verification-approval-types.js";
-import { sanitizeExecApprovalDisplayText } from "./exec-approval-command-display.js";
+import { summarizeApprovalScope, type ApprovalScope } from "./approval-scope.js";
+import { sanitizeExecApprovalDisplayText } from "./exec-approval-text-sanitize.js";
 import type { ExecApprovalDecision } from "./exec-approvals.js";
 
 // Plugin approval types and renderers mirror exec approval decisions while
@@ -22,6 +23,8 @@ export type PluginApprovalRequestPayload = {
   description: string;
   detail?: string | null;
   severity?: "info" | "warning" | "critical" | null;
+  /** Owner-declared blast-radius facts; display-only, never authorization. */
+  scope?: ApprovalScope | null;
   toolName?: string | null;
   toolCallId?: string | null;
   allowedDecisions?: readonly ExecApprovalDecision[] | null;
@@ -31,6 +34,7 @@ export type PluginApprovalRequestPayload = {
   agentId?: string | null;
   sessionKey?: string | null;
   sessionId?: string | null;
+  /** Host-derived source run; never accepted from plugin approval RPC params. */
   runId?: string | null;
   turnSourceChannel?: string | null;
   turnSourceTo?: string | null;
@@ -40,6 +44,8 @@ export type PluginApprovalRequestPayload = {
 
 /** Timed plugin approval request persisted while awaiting a decision. */
 export type PluginApprovalRequest = {
+  /** Descriptive wire metadata; readers derive it from the payload when absent. */
+  approvalKind?: "plugin";
   id: string;
   request: PluginApprovalRequestPayload;
   createdAtMs: number;
@@ -70,6 +76,9 @@ export const DEFAULT_PLUGIN_APPROVAL_DECISIONS = [
 
 /** Caps reviewer-only plugin detail by Unicode code point without splitting surrogate pairs. */
 export function truncatePluginApprovalDetail(value: string): string {
+  if (value.length <= PLUGIN_APPROVAL_DETAIL_MAX_LENGTH) {
+    return value;
+  }
   const contentLimit =
     PLUGIN_APPROVAL_DETAIL_MAX_LENGTH - Array.from(PLUGIN_APPROVAL_DETAIL_TRUNCATION_SUFFIX).length;
   let codePointCount = 0;
@@ -160,6 +169,9 @@ export function buildPluginApprovalRequestMessage(
   lines.push(`Title: ${request.request.title}`);
   // Reviewer-only detail stays off channel messages; channels receive the bounded description.
   lines.push(`Description: ${request.request.description}`);
+  if (request.request.scope) {
+    lines.push(`Scope: ${summarizeApprovalScope(request.request.scope)}`);
+  }
   if (request.request.toolName) {
     lines.push(`Tool: ${request.request.toolName}`);
   }

@@ -1,3 +1,4 @@
+import type { ApprovalScope } from "../infra/approval-scope.js";
 import type { PluginExternalResolution } from "./external-verification-approval-types.js";
 
 export const PluginApprovalResolutions = {
@@ -14,6 +15,7 @@ export type PluginApprovalResolution =
 type PluginHookApprovalRequest = {
   title: string;
   description: string;
+  scope?: ApprovalScope;
   severity?: "info" | "warning" | "critical";
   timeoutMs?: number;
   /**

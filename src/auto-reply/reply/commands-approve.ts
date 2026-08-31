@@ -10,6 +10,7 @@ import { startExternalVerificationForReviewer } from "../../gateway/plugin-exter
 import { logVerbose } from "../../globals.js";
 import { isApprovalNotFoundError } from "../../infra/approval-errors.js";
 import { resolveApprovalOverGateway } from "../../infra/approval-gateway-resolver.js";
+import type { ChannelApprovalKind } from "../../infra/approval-types.js";
 import { resolveApprovalCommandAuthorization } from "../../infra/channel-approval-auth.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import type { OriginatingChannelType } from "../templating.js";
@@ -100,7 +101,10 @@ function parseApproveCommand(raw: string): ParsedApproveCommand | null {
   return { ok: false, error: APPROVE_USAGE_TEXT };
 }
 
-function buildResolvedByLabel(params: Parameters<CommandHandler>[0]): string {
+type ApproveCommandParams = Pick<Parameters<CommandHandler>[0], "cfg" | "command" | "ctx"> &
+  Partial<Pick<Parameters<CommandHandler>[0], "sessionKey">>;
+
+function buildResolvedByLabel(params: ApproveCommandParams): string {
   const channel = params.command.channel;
   const sender = params.command.senderId ?? "unknown";
   return `${channel}:${sender}`;
@@ -111,7 +115,7 @@ function formatApprovalSubmitError(error: unknown): string {
 }
 
 function buildExternalInteractionId(
-  params: Parameters<CommandHandler>[0],
+  params: ApproveCommandParams,
   accountId: string | undefined,
 ): string | null {
   const messageId =
@@ -136,7 +140,6 @@ function buildExternalInteractionId(
     .digest("hex");
 }
 
-type ApprovalKind = "exec" | "plugin";
 type ApproveCommandBehavior =
   | { kind: "allow" }
   | { kind: "ignore" }
@@ -145,7 +148,7 @@ type ApproveCommandBehavior =
 function resolveAuthorizedApprovalKinds(params: {
   execAuthorization: ReturnType<typeof resolveApprovalCommandAuthorization>;
   pluginAuthorization: ReturnType<typeof resolveApprovalCommandAuthorization>;
-}): ApprovalKind[] {
+}): ChannelApprovalKind[] {
   return [
     ...(params.execAuthorization.authorized ? (["exec"] as const) : []),
     ...(params.pluginAuthorization.authorized ? (["plugin"] as const) : []),
@@ -163,7 +166,10 @@ function resolveApprovalAuthorizationError(params: {
   );
 }
 
-export const handleApproveCommand: CommandHandler = async (params, allowTextCommands) => {
+export async function handleApproveCommandFromContext(
+  params: ApproveCommandParams,
+  allowTextCommands: boolean,
+) {
   if (!allowTextCommands) {
     return null;
   }
@@ -217,7 +223,7 @@ export const handleApproveCommand: CommandHandler = async (params, allowTextComm
   const approvalCapability = resolveChannelApprovalCapability(
     getChannelPlugin(params.command.channel),
   );
-  const commandBehaviors = new Map<ApprovalKind, ApproveCommandBehavior | undefined>();
+  const commandBehaviors = new Map<ChannelApprovalKind, ApproveCommandBehavior | undefined>();
   for (const approvalKind of ["exec", "plugin"] as const) {
     commandBehaviors.set(
       approvalKind,
@@ -243,12 +249,18 @@ export const handleApproveCommand: CommandHandler = async (params, allowTextComm
   };
 
   const resolvedBy = buildResolvedByLabel(params);
-  const callApprovalMethod = async (resolveMethod: ApprovalKind): Promise<void> => {
+  const callApprovalMethod = async (resolveMethod: ChannelApprovalKind): Promise<void> => {
     await resolveApprovalOverGateway({
       cfg: params.cfg,
       approvalId: parsed.id,
       decision: parsed.decision,
-      senderId: params.command.senderId,
+      ...(approvalCapability?.authorizeActorAction
+        ? {
+            channel: params.command.channel,
+            accountId: effectiveAccountId,
+            senderId: params.command.senderId,
+          }
+        : {}),
       resolveMethod,
       clientDisplayName: `Chat approval (${resolvedBy})`,
     });
@@ -368,4 +380,7 @@ export const handleApproveCommand: CommandHandler = async (params, allowTextComm
     shouldContinue: false,
     reply: { text: `✅ Approval ${parsed.decision} submitted for ${parsed.id}.` },
   };
-};
+}
+
+export const handleApproveCommand: CommandHandler = async (params, allowTextCommands) =>
+  await handleApproveCommandFromContext(params, allowTextCommands);

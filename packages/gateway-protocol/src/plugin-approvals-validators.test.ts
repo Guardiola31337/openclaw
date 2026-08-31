@@ -6,6 +6,23 @@ import type {
   PluginApprovalExternalStartResult,
 } from "./schema/plugin-approvals.js";
 
+const nullableMetadataFields = [
+  "pluginId",
+  "detail",
+  "severity",
+  "scope",
+  "toolName",
+  "toolCallId",
+  "allowedDecisions",
+  "agentId",
+  "sessionKey",
+  "approvalReviewerDeviceIds",
+  "turnSourceChannel",
+  "turnSourceTo",
+  "turnSourceAccountId",
+  "turnSourceThreadId",
+] as const;
+
 describe("plugin approval protocol validators", () => {
   it("keeps external action wire enums closed in the public types", () => {
     expectTypeOf<PluginApprovalExternalPrepareParams["decision"]>().toEqualTypeOf<
@@ -36,5 +53,15 @@ describe("plugin approval protocol validators", () => {
     expect(validatePluginApprovalRequestParams({ ...request, description: "d".repeat(513) })).toBe(
       false,
     );
+  });
+
+  it.each(nullableMetadataFields)("accepts explicit null for optional %s metadata", (field) => {
+    expect(
+      validatePluginApprovalRequestParams({
+        title: "Apply workspace skill proposal",
+        description: "Apply the pending proposal",
+        [field]: null,
+      }),
+    ).toBe(true);
   });
 });

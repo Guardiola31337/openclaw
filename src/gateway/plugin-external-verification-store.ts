@@ -15,6 +15,7 @@ import type {
   OperatorApprovals,
   PluginExternalVerificationAttempts,
 } from "../state/openclaw-state-db.generated.js";
+import { ensurePluginExternalVerificationSchema } from "../state/openclaw-state-db-schema-additive.js";
 import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabase,
@@ -82,6 +83,7 @@ export function getExternalVerificationAttemptSnapshot(params: {
   databaseOptions?: OpenClawStateDatabaseOptions;
 }): PluginExternalVerificationAttemptSnapshot | null {
   return runOpenClawStateWriteTransaction((database) => {
+    ensurePluginExternalVerificationSchema(database.db);
     const attempt = selectAttempt(database, params.attemptId);
     if (!attempt || attempt.plugin_id !== params.pluginId) {
       return null;
@@ -343,6 +345,7 @@ export function getExternalVerificationNativeActionState(params: {
   databaseOptions?: OpenClawStateDatabaseOptions;
 }): ExternalVerificationNativeActionState {
   return runOpenClawStateWriteTransaction((database) => {
+    ensurePluginExternalVerificationSchema(database.db);
     const selected = selectExternalApproval({ database, ...params });
     if (selected.outcome !== "ready") {
       return selected;
@@ -386,6 +389,7 @@ export function startExternalVerificationAttempt(params: {
   databaseOptions?: OpenClawStateDatabaseOptions;
 }): StartExternalVerificationResult {
   return runOpenClawStateWriteTransaction((database) => {
+    ensurePluginExternalVerificationSchema(database.db);
     const nowMs = params.nowMs ?? Date.now();
     // Decision is part of the idempotency key: each authenticated interaction/decision
     // pair starts once, so stale redelivery cannot revive superseded reviewer intent.
@@ -510,6 +514,7 @@ function endExternalVerificationAttempt(params: {
   databaseOptions?: OpenClawStateDatabaseOptions;
 }): void {
   runOpenClawStateWriteTransaction((database) => {
+    ensurePluginExternalVerificationSchema(database.db);
     const stateDb = getNodeSqliteKysely<ExternalVerificationDatabase>(database.db);
     executeSqliteQuerySync(
       database.db,
@@ -568,6 +573,7 @@ export function completeExternalVerificationAttempt(params: {
   databaseOptions?: OpenClawStateDatabaseOptions;
 }): CompleteExternalVerificationStoreResult {
   return runOpenClawStateWriteTransaction((database) => {
+    ensurePluginExternalVerificationSchema(database.db);
     const nowMs = params.nowMs ?? Date.now();
     const stateDb = getNodeSqliteKysely<ExternalVerificationDatabase>(database.db);
     let attempt = selectAttempt(database, params.attemptId);

@@ -10,8 +10,14 @@ import {
   validatePluginApprovalRequestParams,
   validatePluginApprovalResolveParams,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { sanitizeApprovalScope, type ApprovalScope } from "../../infra/approval-scope.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import type { ExecApprovalForwarder } from "../../infra/exec-approval-forwarder.js";
+import {
+  exceedsApprovalTextLimit,
+  sanitizeExecApprovalDisplayText,
+  sanitizeExecApprovalWarningText,
+} from "../../infra/exec-approval-text-sanitize.js";
 import { resolveCanonicalPluginApprovalRequestAllowedDecisions } from "../../infra/plugin-approval-canonical-decisions.js";
 import type {
   PluginApprovalRequest,
@@ -20,11 +26,16 @@ import type {
 } from "../../infra/plugin-approvals.js";
 import {
   normalizePluginExternalResolution,
+  PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH,
+  PLUGIN_APPROVAL_TITLE_MAX_LENGTH,
   resolvePluginApprovalTimeoutMs,
+  truncatePluginApprovalDetail,
 } from "../../infra/plugin-approvals.js";
 import type { ExecApprovalManager } from "../exec-approval-manager.js";
 import { canReviewOperatorApproval } from "../operator-approval-authorization.js";
 import type { PluginExternalVerificationRuntime } from "../plugin-external-verification-runtime.js";
+import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
+import { resolveStoredSessionKeyForAgentStore } from "../session-store-key.js";
 import { runApprovalRequestDeliveries } from "./approval-request-delivery.js";
 import {
   bindApprovalRequesterMetadata,
@@ -60,8 +71,17 @@ export function createPluginApprovalHandlers(
   },
 ): GatewayRequestHandlers {
   return {
-    "plugin.approval.list": async ({ respond, client }) => {
-      respond(true, listVisiblePendingApprovalRequests({ manager, client }), undefined);
+    "plugin.approval.list": async ({ respond, client, context }) => {
+      respond(
+        true,
+        listVisiblePendingApprovalRequests({
+          manager,
+          client,
+          approvalKind: "plugin",
+          ...(client?.authenticatedUserProfile ? { cfg: context.getRuntimeConfig() } : {}),
+        }),
+        undefined,
+      );
     },
     "plugin.approval.external.prepare": async ({ params, respond, client }) => {
       if (!validatePluginApprovalExternalPrepareParams(params)) {
@@ -204,12 +224,13 @@ export function createPluginApprovalHandlers(
         description: string;
         detail?: string | null;
         severity?: string | null;
+        scope?: ApprovalScope | null;
         toolName?: string | null;
         toolCallId?: string | null;
         allowedDecisions?: string[] | null;
         agentId?: string | null;
         sessionKey?: string | null;
-        approvalReviewerDeviceIds?: string[];
+        approvalReviewerDeviceIds?: string[] | null;
         turnSourceChannel?: string | null;
         turnSourceTo?: string | null;
         turnSourceAccountId?: string | null;
@@ -277,17 +298,98 @@ export function createPluginApprovalHandlers(
       }
       const twoPhase = p.twoPhase === true;
       const timeoutMs = resolvePluginApprovalTimeoutMs(p.timeoutMs);
+      const trustedAgentRuntime = client?.internal?.agentRuntimeIdentity;
+
+      if (
+        trustedAgentRuntime &&
+        context.validateAgentRuntimeApprovalAuthority?.(trustedAgentRuntime) !== true
+      ) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            "agent runtime approval authority is no longer active",
+          ),
+        );
+        return;
+      }
+
+      if (trustedAgentRuntime && !trustedAgentRuntime.approvalOwnerPluginId) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "signed plugin approval owner is unavailable"),
+        );
+        return;
+      }
 
       const normalizeTrimmedString = (value?: string | null): string | null =>
         normalizeOptionalString(value) || null;
 
+      const rawSessionKey = normalizeOptionalString(
+        trustedAgentRuntime?.sessionKey ?? p.sessionKey,
+      );
+      const sessionOwner = rawSessionKey
+        ? resolveRequestedSessionAgentId(
+            context.getRuntimeConfig(),
+            rawSessionKey,
+            normalizeOptionalString(trustedAgentRuntime?.agentId ?? p.agentId),
+          )
+        : undefined;
+      if (sessionOwner && !sessionOwner.ok) {
+        respond(false, undefined, sessionOwner.error);
+        return;
+      }
+      const sessionKey =
+        rawSessionKey && sessionOwner?.ok
+          ? resolveStoredSessionKeyForAgentStore({
+              cfg: context.getRuntimeConfig(),
+              agentId: sessionOwner.agentId,
+              sessionKey: rawSessionKey,
+            })
+          : null;
+
+      // Sanitize once at the creation boundary, like exec command text: the
+      // raw record otherwise reaches channel messages, iOS push, and the web
+      // modal unescaped (bidi/invisible spoofing). Escaping expands invisible
+      // chars to \u{...}, so re-check the protocol caps: a spoof-heavy title
+      // must fail loud here, not as a misleading registration throw later.
+      const sanitizedTitle = sanitizeExecApprovalDisplayText(p.title);
+      const sanitizedDescription = sanitizeExecApprovalWarningText(p.description);
+      if (
+        exceedsApprovalTextLimit(sanitizedTitle, PLUGIN_APPROVAL_TITLE_MAX_LENGTH) ||
+        exceedsApprovalTextLimit(sanitizedDescription, PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH)
+      ) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            "approval title or description exceeds the display limit after sanitization",
+          ),
+        );
+        return;
+      }
+      const rawDetail = normalizeTrimmedString(p.detail);
+      // Untrusted display metadata gets the same escape as title/description:
+      // pluginId/toolName/agentId are interpolated into channel approval text.
+      // Host-minted runtime identity values stay authoritative and unescaped.
+      const sanitizeMeta = (value?: string | null): string | null =>
+        normalizeTrimmedString(value) === null
+          ? null
+          : sanitizeExecApprovalDisplayText(normalizeTrimmedString(value)!);
       const request: PluginApprovalRequestPayload = {
-        pluginId: pluginId ?? null,
-        title: p.title,
-        description: p.description,
-        detail: normalizeTrimmedString(p.detail),
+        pluginId: trustedAgentRuntime?.approvalOwnerPluginId ?? sanitizeMeta(p.pluginId),
+        title: sanitizedTitle,
+        description: sanitizedDescription,
+        scope: p.scope ? sanitizeApprovalScope(p.scope) : null,
+        detail:
+          rawDetail === null
+            ? null
+            : truncatePluginApprovalDetail(sanitizeExecApprovalWarningText(rawDetail)),
         severity: (p.severity as PluginApprovalRequestPayload["severity"]) ?? null,
-        toolName: toolName ?? null,
+        toolName: sanitizeMeta(p.toolName),
         toolCallId: p.toolCallId ?? null,
         ...(externalResolution ? { externalResolution } : {}),
         ...(Array.isArray(p.allowedDecisions)
@@ -298,16 +400,26 @@ export function createPluginApprovalHandlers(
               }),
             }
           : {}),
-        agentId: p.agentId ?? null,
-        sessionKey: p.sessionKey ?? null,
+        agentId:
+          trustedAgentRuntime?.agentId ??
+          (sessionOwner?.ok ? sessionOwner.agentId : sanitizeMeta(p.agentId)),
+        sessionKey,
         sessionId: internalRequest
           ? normalizeOptionalString(rawParams?.sessionId as string | undefined)
           : null,
-        runId,
-        turnSourceChannel: normalizeTrimmedString(p.turnSourceChannel),
-        turnSourceTo: normalizeTrimmedString(p.turnSourceTo),
-        turnSourceAccountId: normalizeTrimmedString(p.turnSourceAccountId),
-        turnSourceThreadId: p.turnSourceThreadId ?? null,
+        runId: trustedAgentRuntime?.operationalRunInstance.runId ?? runId,
+        turnSourceChannel: trustedAgentRuntime
+          ? normalizeTrimmedString(trustedAgentRuntime.turnSourceChannel)
+          : normalizeTrimmedString(p.turnSourceChannel),
+        turnSourceTo: trustedAgentRuntime
+          ? normalizeTrimmedString(trustedAgentRuntime.turnSourceTo)
+          : normalizeTrimmedString(p.turnSourceTo),
+        turnSourceAccountId: trustedAgentRuntime
+          ? normalizeTrimmedString(trustedAgentRuntime.turnSourceAccountId)
+          : normalizeTrimmedString(p.turnSourceAccountId),
+        turnSourceThreadId: trustedAgentRuntime
+          ? (trustedAgentRuntime.turnSourceThreadId ?? null)
+          : (p.turnSourceThreadId ?? null),
       };
 
       // The abort owner records its tombstone before sweeping approvals. Keep
@@ -326,6 +438,15 @@ export function createPluginApprovalHandlers(
       // Always server-generate the ID — never accept plugin-provided IDs.
       // Kind-prefix so /approve routing can distinguish plugin vs exec IDs deterministically.
       const record = manager.create(request, timeoutMs, `plugin:${randomUUID()}`);
+      if (trustedAgentRuntime) {
+        record.agentRuntimeDelegatedAuthority = trustedAgentRuntime.delegatedAuthority;
+      }
+      if (
+        trustedAgentRuntime?.executionIdentity &&
+        request.runId === trustedAgentRuntime.executionIdentity.runId
+      ) {
+        record.executionIdentityToken = trustedAgentRuntime.executionIdentity;
+      }
       bindApprovalRequesterMetadata({ record, client });
       if (client?.internal?.approvalRuntime === true) {
         bindApprovalReviewerDeviceIds({
@@ -345,7 +466,7 @@ export function createPluginApprovalHandlers(
         return;
       }
 
-      const requestEvent = buildRequestedApprovalEvent(record);
+      const requestEvent = buildRequestedApprovalEvent(record, "plugin");
       const forwardRequest = opts?.forwarder?.handlePluginApprovalRequested?.bind(opts.forwarder);
       const iosPushRequest = opts?.iosPushDelivery?.handleRequested?.bind(opts.iosPushDelivery);
 
@@ -383,11 +504,12 @@ export function createPluginApprovalHandlers(
       });
     },
 
-    "plugin.approval.waitDecision": async ({ params, respond, client }) => {
+    "plugin.approval.waitDecision": async ({ params, respond, client, context }) => {
       await handleApprovalWaitDecision({
         manager,
         inputId: (params as { id?: string }).id,
         client,
+        ...(client?.authenticatedUserProfile ? { cfg: context.getRuntimeConfig() } : {}),
         respond,
       });
     },
@@ -402,7 +524,7 @@ export function createPluginApprovalHandlers(
       if (!resolveParams) {
         return;
       }
-      const { inputId, decision } = resolveParams;
+      const { inputId, decision, reviewer } = resolveParams;
       await handleApprovalResolve({
         approvalKind: "plugin",
         manager,
@@ -411,6 +533,7 @@ export function createPluginApprovalHandlers(
         respond,
         context,
         client,
+        reviewer,
         exposeAmbiguousPrefixError: false,
         validateDecision: (snapshot) =>
           resolveCanonicalPluginApprovalRequestAllowedDecisions(snapshot.request).includes(decision)
@@ -423,21 +546,6 @@ export function createPluginApprovalHandlers(
                   ),
                 },
               },
-        resolvedEventName: "plugin.approval.resolved",
-        buildResolvedEvent: ({
-          approvalId,
-          decision: decisionLocal,
-          resolvedBy,
-          snapshot,
-          nowMs,
-        }) =>
-          ({
-            id: approvalId,
-            decision: decisionLocal,
-            resolvedBy,
-            ts: nowMs,
-            request: snapshot.request,
-          }) satisfies PluginApprovalResolved,
         forwardResolved: (resolvedEvent) =>
           opts?.forwarder?.handlePluginApprovalResolved?.(resolvedEvent),
         forwardResolvedErrorLabel: "plugin approvals: forward resolve failed",

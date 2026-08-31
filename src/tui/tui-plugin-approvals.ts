@@ -6,9 +6,11 @@ import {
   type OverlayHandle,
   type SelectItem,
 } from "@earendil-works/pi-tui";
+import { asOptionalObjectRecord } from "@openclaw/normalization-core/record-coerce";
 import { isApprovalStaleError } from "../infra/approval-errors.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { selectListTheme, theme } from "./theme/theme.js";
+import { createTuiRefreshCoalescer } from "./coalesced-refresh.js";
+import { selectListTheme, tuiTheme as theme } from "./theme/theme.js";
 import type {
   TuiApprovalDecision,
   TuiBackend,
@@ -16,6 +18,7 @@ import type {
   TuiPluginApproval,
 } from "./tui-backend.js";
 import { sanitizeRenderableText } from "./tui-formatters.js";
+import { matchesOwnedTuiSession } from "./tui-session-events.js";
 
 type ApprovalSelector = Component & {
   onSelect?: (item: SelectItem) => void;
@@ -290,10 +293,6 @@ const EXTERNAL_DECISION_ITEMS: Record<TuiExternalApprovalDecision, SelectItem> =
   },
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function parseDecision(value: unknown): TuiApprovalDecision | null {
   return value === "allow-once" || value === "allow-always" || value === "deny" ? value : null;
 }
@@ -323,15 +322,16 @@ function parseAllowedDecisions(value: unknown): TuiApprovalDecision[] | undefine
 function parseExternalResolution(
   value: unknown,
 ): TuiPluginApproval["request"]["externalResolution"] {
-  if (!isRecord(value)) {
+  const record = asOptionalObjectRecord(value);
+  if (!record) {
     return null;
   }
-  const label = typeof value.label === "string" ? value.label.trim() : "";
-  if (!label || !Array.isArray(value.decisions)) {
+  const label = typeof record.label === "string" ? record.label.trim() : "";
+  if (!label || !Array.isArray(record.decisions)) {
     return null;
   }
   const decisions: TuiExternalApprovalDecision[] = [];
-  for (const candidate of value.decisions) {
+  for (const candidate of record.decisions) {
     if (
       (candidate === "allow-once" || candidate === "allow-always") &&
       !decisions.includes(candidate)
@@ -348,17 +348,19 @@ function parseSeverity(value: unknown): TuiPluginApproval["request"]["severity"]
 
 /** Parses the gateway event/list shape used for pending plugin approvals. */
 function parseTuiPluginApproval(payload: unknown): TuiPluginApproval | null {
-  if (!isRecord(payload) || !isRecord(payload.request)) {
+  const record = asOptionalObjectRecord(payload);
+  const request = asOptionalObjectRecord(record?.request);
+  if (!record || !request) {
     return null;
   }
-  const id = typeof payload.id === "string" ? payload.id.trim() : "";
-  const title = typeof payload.request.title === "string" ? payload.request.title.trim() : "";
-  const createdAtMs = typeof payload.createdAtMs === "number" ? payload.createdAtMs : 0;
-  const expiresAtMs = typeof payload.expiresAtMs === "number" ? payload.expiresAtMs : 0;
+  const id = typeof record.id === "string" ? record.id.trim() : "";
+  const title = typeof request.title === "string" ? request.title.trim() : "";
+  const createdAtMs = typeof record.createdAtMs === "number" ? record.createdAtMs : 0;
+  const expiresAtMs = typeof record.expiresAtMs === "number" ? record.expiresAtMs : 0;
   if (!id || !title || !createdAtMs || !expiresAtMs) {
     return null;
   }
-  const rawExternalResolution = payload.request.externalResolution;
+  const rawExternalResolution = request.externalResolution;
   const externalResolution = parseExternalResolution(rawExternalResolution);
   if (rawExternalResolution != null && !externalResolution) {
     return null;
@@ -367,16 +369,14 @@ function parseTuiPluginApproval(payload: unknown): TuiPluginApproval | null {
     id,
     request: {
       title,
-      description:
-        typeof payload.request.description === "string" ? payload.request.description : null,
-      pluginId: typeof payload.request.pluginId === "string" ? payload.request.pluginId : null,
-      severity: parseSeverity(payload.request.severity),
-      toolName: typeof payload.request.toolName === "string" ? payload.request.toolName : null,
-      allowedDecisions: parseAllowedDecisions(payload.request.allowedDecisions),
+      description: typeof request.description === "string" ? request.description : null,
+      pluginId: typeof request.pluginId === "string" ? request.pluginId : null,
+      severity: parseSeverity(request.severity),
+      toolName: typeof request.toolName === "string" ? request.toolName : null,
+      allowedDecisions: parseAllowedDecisions(request.allowedDecisions),
       externalResolution,
-      agentId: typeof payload.request.agentId === "string" ? payload.request.agentId : null,
-      sessionKey:
-        typeof payload.request.sessionKey === "string" ? payload.request.sessionKey : null,
+      agentId: typeof request.agentId === "string" ? request.agentId : null,
+      sessionKey: typeof request.sessionKey === "string" ? request.sessionKey : null,
     },
     createdAtMs,
     expiresAtMs,
@@ -384,10 +384,11 @@ function parseTuiPluginApproval(payload: unknown): TuiPluginApproval | null {
 }
 
 function parseResolvedApprovalId(payload: unknown): string | null {
-  if (!isRecord(payload) || typeof payload.id !== "string") {
+  const id = asOptionalObjectRecord(payload)?.id;
+  if (typeof id !== "string") {
     return null;
   }
-  return payload.id.trim() || null;
+  return id.trim() || null;
 }
 
 function decisionLabel(decision: TuiApprovalDecision): string {
@@ -420,8 +421,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
   let expiryTimer: ApprovalTimer | null = null;
   let disposed = false;
   let mutationVersion = 0;
-  let refreshAgain = false;
-  let refreshInFlight: Promise<void> | null = null;
+  const refreshRunner = createTuiRefreshCoalescer(async () => await refreshOnce());
   const mutations = new Map<string, ApprovalMutation>();
   const resolvingIds = new Set<string>();
   const dismissedIds = new Set<string>();
@@ -445,7 +445,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
   };
 
   const recordMutation = (id: string, approval: TuiPluginApproval | null) => {
-    if (!refreshInFlight) {
+    if (!refreshRunner.isRunning()) {
       return;
     }
     mutationVersion += 1;
@@ -475,17 +475,8 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
     }
   };
 
-  const matchesActiveSession = (approval: TuiPluginApproval) => {
-    const sessionKey = approval.request.sessionKey?.trim();
-    if (!sessionKey || sessionKey !== deps.getSessionKey()) {
-      return false;
-    }
-    if (sessionKey !== "global") {
-      return true;
-    }
-    const agentId = approval.request.agentId?.trim();
-    return Boolean(agentId && agentId === deps.getAgentId());
-  };
+  const matchesActiveSession = (approval: TuiPluginApproval) =>
+    matchesOwnedTuiSession(deps.getSessionKey(), deps.getAgentId(), approval.request);
 
   const prune = () => {
     const now = nowMs();
@@ -513,7 +504,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
 
     const externalDecisions = approval.request.externalResolution?.decisions ?? [];
     const decisions = approval.request.externalResolution
-      ? approval.request.allowedDecisions === undefined
+      ? approval.request.allowedDecisions == null
         ? (["deny"] as const)
         : approval.request.allowedDecisions.filter((decision) => decision === "deny")
       : approval.request.allowedDecisions?.length
@@ -731,7 +722,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
     queue = [...next.values()].toSorted((left, right) => left.createdAtMs - right.createdAtMs);
   };
 
-  const refreshOnce = async () => {
+  async function refreshOnce(): Promise<void> {
     if (disposed || !deps.client.listPluginApprovals) {
       return;
     }
@@ -755,27 +746,13 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
     }
     presentNext();
     deps.requestRender();
-  };
+  }
 
   const refreshApprovals = async (): Promise<void> => {
     if (disposed || !deps.client.listPluginApprovals) {
       return;
     }
-    if (refreshInFlight) {
-      refreshAgain = true;
-      return await refreshInFlight;
-    }
-    refreshInFlight = (async () => {
-      do {
-        refreshAgain = false;
-        await refreshOnce();
-      } while (refreshAgain);
-    })();
-    try {
-      await refreshInFlight;
-    } finally {
-      refreshInFlight = null;
-    }
+    await refreshRunner.run();
   };
 
   return {
