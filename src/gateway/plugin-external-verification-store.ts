@@ -10,12 +10,12 @@ import type {
   PluginExternalVerificationAttemptSnapshot,
   PluginExternalVerificationGrantAuthorization,
 } from "../plugins/external-verification-approval-types.js";
+import { ensurePluginExternalVerificationSchema } from "../state/openclaw-state-db-schema-additive.js";
 import type {
   DB as OpenClawStateKyselyDatabase,
   OperatorApprovals,
   PluginExternalVerificationAttempts,
 } from "../state/openclaw-state-db.generated.js";
-import { ensurePluginExternalVerificationSchema } from "../state/openclaw-state-db-schema-additive.js";
 import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabase,
@@ -103,11 +103,13 @@ function readExternalResolution(row: OperatorApprovalRow): ExternalResolutionPro
     if (typeof presentation !== "object" || presentation === null || Array.isArray(presentation)) {
       return null;
     }
+    // SAFETY: isRecord(presentation) was checked by the caller guard above.
     const record = presentation as Record<string, unknown>;
     const external = record.externalResolution;
     if (typeof external !== "object" || external === null || Array.isArray(external)) {
       return null;
     }
+    // SAFETY: isRecord(external) was checked immediately above.
     const externalRecord = external as Record<string, unknown>;
     const label = typeof externalRecord.label === "string" ? externalRecord.label.trim() : "";
     const rawDecisions = externalRecord.decisions;
@@ -122,6 +124,7 @@ function readExternalResolution(row: OperatorApprovalRow): ExternalResolutionPro
     }
     return {
       label,
+      // SAFETY: the filter above kept only allow-once/allow-always literals.
       decisions: rawDecisions as Array<"allow-once" | "allow-always">,
     };
   } catch {
@@ -313,6 +316,7 @@ function validatePendingExternalApproval(params: {
   }
   const pluginId = (() => {
     try {
+      // SAFETY: presentation_json is host-written canonical presentation state.
       const presentation = JSON.parse(approval.presentation_json) as {
         pluginId?: unknown;
       };

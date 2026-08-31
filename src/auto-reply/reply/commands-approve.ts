@@ -318,6 +318,7 @@ export async function handleApproveCommandFromContext(
         present: async (message) => {
           const delivery = await routeReply({
             payload: { text: message },
+            // SAFETY: command contexts only originate from registered channels.
             channel: params.command.channel as OriginatingChannelType,
             to: target,
             accountId: effectiveAccountId,

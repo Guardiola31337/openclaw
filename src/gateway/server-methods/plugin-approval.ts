@@ -197,6 +197,7 @@ export function createPluginApprovalHandlers(
         typeof params === "object" &&
         params !== null &&
         !Array.isArray(params);
+      // SAFETY: internalRequest already proved params is a non-array object.
       const rawParams = internalRequest ? (params as Record<string, unknown>) : null;
       const publicParams = rawParams
         ? Object.fromEntries(
@@ -218,6 +219,7 @@ export function createPluginApprovalHandlers(
         );
         return;
       }
+      // SAFETY: validatePluginApprovalRequestParams accepted publicParams above.
       const p = publicParams as {
         pluginId?: string | null;
         title: string;
@@ -242,6 +244,7 @@ export function createPluginApprovalHandlers(
       try {
         externalResolution = internalRequest
           ? normalizePluginExternalResolution(
+              // SAFETY: normalizePluginExternalResolution validates or throws on this shape.
               rawParams?.externalResolution as PluginApprovalRequestPayload["externalResolution"],
             )
           : null;
@@ -254,10 +257,15 @@ export function createPluginApprovalHandlers(
         return;
       }
       const runId = internalRequest
-        ? normalizeOptionalString(rawParams?.runId as string | undefined)
+        ? normalizeOptionalString(rawParams?.runId as string | undefined) // SAFETY: normalizeOptionalString rejects every non-string value.
         : null;
       const pluginId = normalizeOptionalString(p.pluginId ?? undefined);
       const toolName = normalizeOptionalString(p.toolName ?? undefined);
+      const trustedAgentRuntime = client?.internal?.agentRuntimeIdentity;
+      // Ownership for external verification is host-derived: the signed agent
+      // runtime identity owner wins; an explicit payload pluginId only reaches
+      // here from trusted in-process approval-runtime clients.
+      const externalOwnerPluginId = trustedAgentRuntime?.approvalOwnerPluginId ?? pluginId;
       if (externalResolution && !runId) {
         respond(
           false,
@@ -269,7 +277,7 @@ export function createPluginApprovalHandlers(
         );
         return;
       }
-      if (externalResolution && (!pluginId || !toolName)) {
+      if (externalResolution && (!externalOwnerPluginId || !toolName)) {
         respond(
           false,
           undefined,
@@ -298,7 +306,6 @@ export function createPluginApprovalHandlers(
       }
       const twoPhase = p.twoPhase === true;
       const timeoutMs = resolvePluginApprovalTimeoutMs(p.timeoutMs);
-      const trustedAgentRuntime = client?.internal?.agentRuntimeIdentity;
 
       if (
         trustedAgentRuntime &&
@@ -388,6 +395,7 @@ export function createPluginApprovalHandlers(
           rawDetail === null
             ? null
             : truncatePluginApprovalDetail(sanitizeExecApprovalWarningText(rawDetail)),
+        // SAFETY: schema validation constrained severity to the closed union above.
         severity: (p.severity as PluginApprovalRequestPayload["severity"]) ?? null,
         toolName: sanitizeMeta(p.toolName),
         toolCallId: p.toolCallId ?? null,
@@ -405,7 +413,7 @@ export function createPluginApprovalHandlers(
           (sessionOwner?.ok ? sessionOwner.agentId : sanitizeMeta(p.agentId)),
         sessionKey,
         sessionId: internalRequest
-          ? normalizeOptionalString(rawParams?.sessionId as string | undefined)
+          ? normalizeOptionalString(rawParams?.sessionId as string | undefined) // SAFETY: normalizeOptionalString rejects every non-string value.
           : null,
         runId: trustedAgentRuntime?.operationalRunInstance.runId ?? runId,
         turnSourceChannel: trustedAgentRuntime
