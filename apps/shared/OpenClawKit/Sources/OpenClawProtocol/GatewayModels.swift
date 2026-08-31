@@ -18049,6 +18049,19 @@ public struct StandingGrantApprovalScope: Codable, Sendable {
     }
 }
 
+public struct PluginApprovalExternalResolution: Codable, Sendable {
+    public let label: String
+    public let decisions: [ApprovalAllowDecision]
+
+    public init(
+        label: String,
+        decisions: [ApprovalAllowDecision])
+    {
+        self.label = label
+        self.decisions = decisions
+    }
+}
+
 public struct ExecApprovalPresentation: Codable, Sendable {
     public let kind: String
     public let commandtext: String
@@ -18106,6 +18119,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
     public let agentid: AnyCodable?
     public let scope: ApprovalScope?
     public let alloweddecisions: [ApprovalDecision]
+    public let externalresolution: PluginApprovalExternalResolution?
 
     public init(
         kind: String,
@@ -18117,7 +18131,8 @@ public struct PluginApprovalPresentation: Codable, Sendable {
         toolname: AnyCodable? = nil,
         agentid: AnyCodable? = nil,
         scope: ApprovalScope? = nil,
-        alloweddecisions: [ApprovalDecision])
+        alloweddecisions: [ApprovalDecision],
+        externalresolution: PluginApprovalExternalResolution? = nil)
     {
         self.kind = kind
         self.title = title
@@ -18129,6 +18144,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
         self.agentid = agentid
         self.scope = scope
         self.alloweddecisions = alloweddecisions
+        self.externalresolution = externalresolution
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -18142,6 +18158,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
         case agentid = "agentId"
         case scope
         case alloweddecisions = "allowedDecisions"
+        case externalresolution = "externalResolution"
     }
 }
 
