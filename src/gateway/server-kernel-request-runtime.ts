@@ -47,6 +47,7 @@ export async function prepareGatewayKernelRequestRuntime(params: {
     placementStandingGrants,
     systemAgentApprovalManager,
     bindApprovalPublicationContext,
+    externalVerificationRuntime,
     validateAgentRuntimeApprovalAuthority,
     approvalSessionEvents,
     startupTrace,
@@ -249,6 +250,7 @@ export async function prepareGatewayKernelRequestRuntime(params: {
   });
   gatewayRequestContext.requestEntryLifetime = runtime.requestEntryLifetime;
   bindApprovalPublicationContext(gatewayRequestContext);
+  externalVerificationRuntime.attachContext(gatewayRequestContext);
   await attachInitialGatewayLifetimeSidecars({
     chatMetadataLifecycle,
     gatewayRequestContext,

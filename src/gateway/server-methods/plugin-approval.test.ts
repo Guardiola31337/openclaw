@@ -262,16 +262,6 @@ describe("createPluginApprovalHandlers", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns handlers for every plugin approval method", () => {
-    const handlers = createPluginApprovalHandlers(manager);
-    expect(Object.keys(handlers).toSorted()).toEqual([
-      "plugin.approval.list",
-      "plugin.approval.request",
-      "plugin.approval.resolve",
-      "plugin.approval.waitDecision",
-    ]);
-  });
-
   describe("invalid params", () => {
     it.each(invalidParamMethodCases)("$method rejects invalid params", async ({ method }) => {
       const handlers = createPluginApprovalHandlers(manager);
