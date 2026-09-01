@@ -114,6 +114,7 @@ class PluginApprovalPrompt implements Component {
     approval: TuiPluginApproval,
     private readonly selector: ApprovalSelector,
     presentations: readonly string[] = [],
+    pendingSessionApprovals = 1,
   ) {
     const title = sanitizeApprovalText(approval.request.title);
     const description = sanitizeApprovalText(approval.request.description ?? "");
@@ -125,6 +126,11 @@ class PluginApprovalPrompt implements Component {
         : []),
       ...(approval.request.pluginId
         ? [`Plugin: ${sanitizeApprovalText(approval.request.pluginId)}`]
+        : []),
+      // Back-to-back cards for a multi-call task look identical; the queue
+      // position is what tells the reviewer these are distinct approvals.
+      ...(pendingSessionApprovals > 1
+        ? [`Pending approvals in this session: ${pendingSessionApprovals}`]
         : []),
     ];
     const externalResolution = approval.request.externalResolution;
@@ -490,6 +496,13 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       return;
     }
     prune();
+    // One ceremony at a time: while a dispatched challenge awaits its scan, no
+    // other approval card competes with it. The held approvals stay pending and
+    // fail closed; the chat /approve commands remain the escape hatch if the
+    // ceremony is abandoned before the approval expires.
+    if (queue.some((candidate) => externalPresentations.has(candidate.id))) {
+      return;
+    }
     const approval = queue.find(
       (candidate) =>
         !resolvingIds.has(candidate.id) &&
@@ -501,6 +514,9 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
     }
     activeId = approval.id;
     const surfaceLabel = approvalSurfaceLabel(approval);
+    const pendingSessionApprovals = queue.filter((candidate) =>
+      matchesActiveSession(candidate),
+    ).length;
 
     const externalDecisions = approval.request.externalResolution?.decisions ?? [];
     const decisions = approval.request.externalResolution
@@ -706,6 +722,7 @@ export function createTuiPluginApprovalController(deps: TuiPluginApprovalControl
       approval,
       selector,
       externalPresentations.get(approval.id),
+      pendingSessionApprovals,
     );
     activeOverlay = deps.openOverlay(prompt);
     deps.requestRender();

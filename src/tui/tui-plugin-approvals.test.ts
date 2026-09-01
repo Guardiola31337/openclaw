@@ -936,6 +936,67 @@ describe("TUI plugin approvals", () => {
     expect(harness.resolvePluginApproval).not.toHaveBeenCalled();
   });
 
+  it("holds queued approvals while a dispatched ceremony awaits its scan", async () => {
+    const harness = createHarness();
+    harness.startExternalPluginApproval.mockResolvedValueOnce({
+      outcome: "started",
+      presentations: ["Scan challenge one"],
+    });
+    const external = {
+      label: "Verify with World",
+      decisions: ["allow-once"],
+    };
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-first",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: external,
+        },
+      }),
+    );
+    harness.controller.handleEvent(
+      "plugin.approval.requested",
+      approvalPayload({
+        id: "plugin:world-second",
+        request: {
+          ...approvalPayload().request,
+          allowedDecisions: ["deny"],
+          externalResolution: external,
+        },
+      }),
+    );
+
+    harness.selectors[0]?.onSelectionChange?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    harness.selectors[0]?.onSelect?.({
+      value: "external:allow-once",
+      label: "Verify once",
+    });
+    await vi.waitFor(() => {
+      expect(harness.addPendingSystem).toHaveBeenCalledWith(
+        "plugin-external-verification:plugin:world-first",
+        expect.stringContaining("Scan challenge one"),
+      );
+    });
+
+    // The reviewer is mid-ceremony: the second approval must not compete for
+    // the screen until the first resolves.
+    expect(harness.openOverlay).toHaveBeenCalledTimes(1);
+
+    harness.controller.handleEvent("plugin.approval.resolved", { id: "plugin:world-first" });
+    expect(harness.openOverlay).toHaveBeenCalledTimes(2);
+    const secondPrompt = harness.openOverlay.mock.calls[1]?.[0];
+    const rendered = stripAnsi(
+      expectDefined(secondPrompt, "held prompt test invariant").render(80).join("\n"),
+    );
+    expect(rendered).toContain("workspace skill approval:");
+  });
+
   it("keeps the card for retry after a failed dispatch and closes it on success", async () => {
     const harness = createHarness();
     harness.prepareExternalPluginApproval
