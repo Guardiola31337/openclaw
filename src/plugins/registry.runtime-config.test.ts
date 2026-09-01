@@ -7,6 +7,7 @@ import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { resolveUserPath } from "../utils.js";
+import { getPluginExternalApprovalVerifier } from "./hook-runner-global-state.js";
 import { createPluginRecord } from "./loader-records.js";
 import { markPluginRegistryRetired } from "./registry-lifecycle.js";
 import { createPluginRegistry } from "./registry.js";
@@ -1066,7 +1067,7 @@ describe("plugin registry runtime config scope", () => {
           namespace: "unrestricted",
           maxEntries: 10,
         }),
-      ).toThrow("openKeyedStore is only available for trusted plugins");
+      ).toThrow("openSyncKeyedStore is only available for trusted plugins");
 
       const grants = api.approvals.openGrantStore<{ status: "active" | "revoked" }>();
       expect(grants.registerIfAbsent("grant-1", { status: "active" })).toBe(true);
@@ -1130,7 +1131,7 @@ describe("plugin registry runtime config scope", () => {
     );
   });
 
-  it("does not activate an external verifier during discovery", () => {
+  it("records a discovery-mode verifier in its own registry without global activation", () => {
     const pluginRegistry = createTestRegistry(createPluginRuntime());
     const record = createPluginRecord({
       id: "approval-discovery",
@@ -1146,6 +1147,13 @@ describe("plugin registry runtime config scope", () => {
 
     api.approvals.onExternalVerification(vi.fn());
 
-    expect(pluginRegistry.registry.externalApprovalVerifiers).toEqual([]);
+    // Prepared-run generations load plugins in discovery mode and execute
+    // their hooks, so the verifier must live in the loaded registry itself;
+    // liveness is owned by that registry's lifecycle, never by load mode.
+    expect(
+      pluginRegistry.registry.externalApprovalVerifiers.map((entry) => entry.pluginId),
+    ).toEqual(["approval-discovery"]);
+    // A scan that is never activated leaks nothing into global resolution.
+    expect(getPluginExternalApprovalVerifier("approval-discovery")).toBeNull();
   });
 });
