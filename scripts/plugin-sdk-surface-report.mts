@@ -351,7 +351,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: browser-safe Date timestamp validation and UTF-16 truncation primitives.
       // +3: capability catalog descriptors, entry factories, and native host context.
       // +2: canonical paragraph grouping and UTF-16 boundaries for channel-owned chunking.
-      4433,
+      // +7: plugin-owned external verification approval API and contracts.
+      4440,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -473,7 +474,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +4: defineFeatureContract, createFeatureClient, defineFeaturePlugin, defineControlUiPlugin.
       // +2: browser-safe Date timestamp validation and UTF-16 truncation primitives.
       // +2: canonical paragraph grouping and UTF-16 boundaries for channel-owned chunking.
-      2618,
+      // +1: plugin-owned external verification handler contract.
+      2619,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
@@ -492,7 +494,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       //     (voice-call/matrix runtime-doctor repair names, WhatsApp ack policy,
       //     Slack progress-draft render) so installed plugins survive upgrade (#124041 class).
       // -18: retire the expired August compatibility exports and messaging-targets subpath.
-      1134,
+      // +1: external verification approval shape carried by the plugin API contract.
+      1135,
       env,
     ),
     publicWildcardReexports: readPluginSdkSurfaceBudgetEnv(
