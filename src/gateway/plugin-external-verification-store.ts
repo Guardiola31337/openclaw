@@ -25,7 +25,7 @@ import { isOperatorApprovalReviewerAuthorized } from "./operator-approval-author
 
 type ExternalAttemptRow = Selectable<PluginExternalVerificationAttempts>;
 type OperatorApprovalRow = Selectable<OperatorApprovals>;
-type ExternalVerificationDatabase = Pick<
+export type ExternalVerificationDatabase = Pick<
   OpenClawStateKyselyDatabase,
   "operator_approvals" | "plugin_external_verification_attempts"
 >;
@@ -97,7 +97,9 @@ type ExternalResolutionProjection = {
   decisions: Array<"allow-once" | "allow-always">;
 };
 
-function readExternalResolution(row: OperatorApprovalRow): ExternalResolutionProjection | null {
+export function readExternalResolution(
+  row: OperatorApprovalRow,
+): ExternalResolutionProjection | null {
   try {
     const presentation: unknown = JSON.parse(row.presentation_json);
     if (typeof presentation !== "object" || presentation === null || Array.isArray(presentation)) {

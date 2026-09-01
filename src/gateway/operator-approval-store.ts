@@ -1522,6 +1522,17 @@ export function getOperatorApprovalDetailed(params: {
   }, params.databaseOptions);
 }
 
+export function requireApprovalRecord(
+  approvalId: string,
+  databaseOptions?: OpenClawStateDatabaseOptions,
+): OperatorApprovalRecord {
+  const lookup = getOperatorApprovalDetailed({ id: approvalId, databaseOptions });
+  if (lookup.outcome !== "found") {
+    throw new Error("external verification approval is no longer available");
+  }
+  return lookup.record;
+}
+
 export function listPendingOperatorApprovals(
   params: {
     kind?: OperatorApprovalKind;
