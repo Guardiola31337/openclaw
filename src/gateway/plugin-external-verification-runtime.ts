@@ -212,6 +212,21 @@ export class PluginExternalVerificationRuntime {
     }
   }
 
+  /**
+   * True while a reviewer's external ceremony for this approval is live in
+   * this process. Run-end cleanup pins such approvals: the QR in the
+   * reviewer's hand stays valid, the abandoned call itself never executes
+   * (its waiter is gone), and the approval's own expiry still bounds it.
+   */
+  hasActiveCeremonyForApproval(approvalId: string): boolean {
+    for (const live of this.liveAttempts.values()) {
+      if (live.approvalId === approvalId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private resolveVerifier(pluginId: string): PluginExternalApprovalVerifierRegistration | null {
     return (this.params.resolveVerifier ?? getPluginExternalApprovalVerifier)(pluginId);
   }

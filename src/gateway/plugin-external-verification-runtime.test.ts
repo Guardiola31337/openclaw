@@ -15,6 +15,7 @@ import {
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import { getOperatorApprovalDetailed } from "./operator-approval-store.js";
 import { PluginExternalVerificationRuntime } from "./plugin-external-verification-runtime.js";
+import { cancelUnboundRunApprovals } from "./server-methods/approval-run-cancellation.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
 
 let runtime: PluginExternalVerificationRuntime | null = null;
@@ -170,6 +171,63 @@ describe("PluginExternalVerificationRuntime", () => {
         outcome: "succeeded",
       }),
     ).resolves.toEqual({ ...completed, applied: false });
+    await expect(decision).resolves.toBe("allow-always");
+  });
+
+  it("pins an approval with a live ceremony through run-end cleanup and honors the scan", async () => {
+    const handler = vi.fn(async (attempt: PluginExternalVerificationAttempt) => {
+      await attempt.present({ message: "Scan the World challenge." });
+    });
+    const { owner, decision, manager } = createHarness(handler);
+    // Same run, no ceremony: run-end cleanup must still cancel this one.
+    const abandoned = manager.create(
+      {
+        pluginId: "agentkit",
+        title: "World verification",
+        description: "Verify personhood before continuing.",
+        toolName: "dangerous-tool",
+        toolCallId: "call-abandoned",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        sessionId: "session-1",
+        runId: "run-1",
+        externalResolution: {
+          label: "Verify with World",
+          decisions: ["allow-once", "allow-always"],
+        },
+      },
+      60_000,
+      "plugin:runtime-abandoned",
+    );
+    manager.register(abandoned, 60_000);
+
+    const attempt = await runtime!.start({
+      approvalId: "plugin:runtime-approval",
+      decision: "allow-always",
+      interactionId: "d".repeat(64),
+      present: async () => undefined,
+    });
+
+    const cancelled = cancelUnboundRunApprovals({
+      runId: "run-1",
+      manager,
+      spare: (pending) => runtime!.hasActiveCeremonyForApproval(pending.id),
+      publish: () => undefined,
+    });
+    expect(cancelled).toBe(1);
+    expect(manager.listPendingRecords().map((record) => record.id)).toEqual([
+      "plugin:runtime-approval",
+    ]);
+
+    // The reviewer's scan still lands: trust is honored, the grant mints.
+    const completed = await runtime!.complete(owner, "agentkit", {
+      attemptId: attempt.id,
+      outcome: "succeeded",
+    });
+    expect(completed).toMatchObject({
+      applied: true,
+      approval: { status: "allowed", decision: "allow-always" },
+    });
     await expect(decision).resolves.toBe("allow-always");
   });
 
